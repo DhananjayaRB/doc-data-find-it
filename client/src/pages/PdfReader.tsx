@@ -99,55 +99,34 @@ const PdfReader = () => {
     
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
       
-      const pdfParse = await import('pdf-parse');
-      const pdfData = await pdfParse.default(buffer);
+      // Try pdf-parse with better error handling
+      let text = '';
+      let firstPageText = '';
       
-      console.log('Extracted PDF text length:', pdfData.text.length);
-      
-      const text = pdfData.text;
-      const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
-      
-      // Extract Date - look for specific formats like "16-Jun-2025"
-      let date = '';
-      const datePatterns = [
-        /Date\s*:\s*(\d{1,2}[-]\w{3}[-]\d{4})/i,
-        /(\d{1,2}[-]\w{3}[-]\d{4})/,
-        /(\d{1,2}[-/]\d{1,2}[-/]\d{4})/
-      ];
-      
-      for (const pattern of datePatterns) {
-        const dateMatch = firstPageText.match(pattern);
-        if (dateMatch) {
-          date = dateMatch[1];
-          break;
-        }
+      try {
+        const pdfParse = await import('pdf-parse');
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const pdfData = await pdfParse.default(uint8Array);
+        text = pdfData.text;
+        firstPageText = text.split('\f')[0] || text.substring(0, 3000);
+        console.log('PDF text extracted successfully, length:', text.length);
+        console.log('First page text:', firstPageText.substring(0, 1000));
+      } catch (pdfError) {
+        console.error('PDF parsing error:', pdfError);
+        throw new Error('Failed to extract text from PDF');
       }
       
-      if (!date) {
-        date = new Date().toLocaleDateString('en-GB', { 
-          day: '2-digit', 
-          month: 'short', 
-          year: 'numeric' 
-        });
-      }
+      // Use exact C# regex patterns for extraction
+      const dateMatch = firstPageText.match(/Date:\s+(\d{2}-[A-Za-z]{3}-\d{4})/);
+      const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
+        day: '2-digit', 
+        month: 'short', 
+        year: 'numeric' 
+      });
       
-      // Extract Employee Name - look for "Employee Name:" pattern
-      let employeeName = '';
-      const namePatterns = [
-        /Employee\s+Name\s*:\s*([A-Za-z\s]+?)(?:\n|Employee|PAN|$)/i,
-        /Name\s*:\s*([A-Za-z\s]+?)(?:\n|Employee|PAN|$)/i,
-        /(?:Mr\.|Ms\.|Mrs\.)\s*([A-Za-z\s]+?)(?:\n|Employee|PAN|$)/i
-      ];
-      
-      for (const pattern of namePatterns) {
-        const nameMatch = firstPageText.match(pattern);
-        if (nameMatch) {
-          employeeName = nameMatch[1].trim();
-          break;
-        }
-      }
+      const employeeNameMatch = firstPageText.match(/Employee Name:\s+([A-Za-z\s]+)/);
+      let employeeName = employeeNameMatch ? employeeNameMatch[1].trim() : '';
       
       if (!employeeName) {
         const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
@@ -158,48 +137,15 @@ const PdfReader = () => {
         }
       }
       
-      // Simple PAN extraction without validation
-      const employeePAN = simplePanExtraction(text, file.name);
+      // Use exact C# regex pattern for PAN extraction
+      const employeePANMatch = firstPageText.match(/Employee PAN:\s+([A-Z0-9]+)/);
+      const employeePAN = employeePANMatch ? employeePANMatch[1] : '';
       
-      // Extract Financial Year - look for "Financial Year:" pattern
-      let financialYear = '';
-      const fyPatterns = [
-        /Financial\s+Year\s*:\s*(\d{4}[-]\d{2})/i,
-        /F\.?Y\.?\s*:\s*(\d{4}[-]\d{2})/i,
-        /(\d{4}[-]\d{2})/
-      ];
+      const financialYearMatch = firstPageText.match(/Financial Year:\s+(\d{4}-\d{2})/);
+      const financialYear = financialYearMatch ? financialYearMatch[1] : '2024-25';
       
-      for (const pattern of fyPatterns) {
-        const fyMatch = firstPageText.match(pattern);
-        if (fyMatch) {
-          financialYear = fyMatch[1];
-          break;
-        }
-      }
-      
-      if (!financialYear) {
-        financialYear = '2024-25';
-      }
-      
-      // Extract Assessment Year - look for "Assessment Year:" pattern
-      let assessmentYear = '';
-      const ayPatterns = [
-        /Assessment\s+Year\s*:\s*(\d{4}[-]\d{2})/i,
-        /A\.?Y\.?\s*:\s*(\d{4}[-]\d{2})/i,
-        /Assessment.*?(\d{4}[-]\d{2})/i
-      ];
-      
-      for (const pattern of ayPatterns) {
-        const ayMatch = firstPageText.match(pattern);
-        if (ayMatch) {
-          assessmentYear = ayMatch[1];
-          break;
-        }
-      }
-      
-      if (!assessmentYear) {
-        assessmentYear = '2025-26';
-      }
+      const assessmentYearMatch = firstPageText.match(/Assessment Year:\s+(\d{4}-\d{2})/);
+      const assessmentYear = assessmentYearMatch ? assessmentYearMatch[1] : '2025-26';
       
       // Get the raw first page text for pdfread parameter
       const rawFirstPageText = firstPageText.substring(0, 2000); // Increased to 2000 chars
