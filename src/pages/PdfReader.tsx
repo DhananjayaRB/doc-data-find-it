@@ -40,66 +40,6 @@ const PdfReader = () => {
   const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
 
-  const extractPanFromText = (text: string, fileName: string): string => {
-    console.log(`Extracting PAN from: ${fileName}`);
-    console.log('Raw text for PAN extraction:', text.substring(0, 1000));
-    
-    // Split by common page breaks and take first page
-    const firstPageText = text.split('\f')[0] || text.split('\n\n\n')[0] || text.substring(0, 3000);
-    
-    // Enhanced PAN patterns - more comprehensive search
-    const panPatterns = [
-      // Standard PAN format with word boundaries
-      /\b([A-Z]{5}[0-9]{4}[A-Z]{1})\b/g,
-      // PAN with labels (case insensitive)
-      /(?:Employee\s*PAN|PAN\s*No|PAN\s*Number|P\.A\.N\.?|PAN)\s*[:\-\s]*([A-Z0-9]{10})/gi,
-      // PAN in form fields
-      /(?:PAN|Employee PAN|P\.A\.N\.?)\s*[:\-]*\s*([A-Z]{3,}[0-9]{3,}[A-Z0-9]{1,})/gi,
-      // Any 10-character alphanumeric that looks like PAN
-      /\b([A-Z]{5}[0-9]{4}[A-Z])\b/g,
-      // Relaxed pattern for any potential PAN format
-      /([A-Z]{3,5}[A-Z0-9]{5,7}[A-Z])/g,
-      // Pattern for PAN with spaces or dots
-      /([A-Z]{3,5}[\s\.]*[A-Z0-9]{4,6}[\s\.]*[A-Z])/g
-    ];
-
-    // Try each pattern on the first page text
-    for (const pattern of panPatterns) {
-      const matches = Array.from(firstPageText.matchAll(pattern));
-      for (const match of matches) {
-        let potentialPan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
-        
-        // Accept any 10-character alphanumeric as PAN (no strict validation)
-        if (potentialPan.length === 10 && /^[A-Z0-9]{10}$/.test(potentialPan)) {
-          console.log(`PAN found: ${potentialPan}`);
-          return potentialPan;
-        }
-      }
-    }
-
-    // Try to extract from filename as fallback
-    const fileNamePan = fileName.match(/([A-Z]{5}[0-9]{4}[A-Z])/);
-    if (fileNamePan) {
-      console.log(`PAN found in filename: ${fileNamePan[1]}`);
-      return fileNamePan[1];
-    }
-
-    // Look for any 10-character sequence in the text
-    const anyTenChar = firstPageText.match(/\b([A-Z]{3,}[A-Z0-9]{7,})\b/g);
-    if (anyTenChar) {
-      for (const potential of anyTenChar) {
-        const cleaned = potential.replace(/[^A-Z0-9]/g, '');
-        if (cleaned.length === 10) {
-          console.log(`Potential PAN found: ${cleaned}`);
-          return cleaned;
-        }
-      }
-    }
-
-    console.log(`No PAN found for: ${fileName}`);
-    return '';
-  };
-
   const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath' | 'companyName'>> => {
     console.log(`Starting PDF extraction for file: ${file.name}`);
     
@@ -126,22 +66,18 @@ const PdfReader = () => {
       console.log('First page text length:', firstPageText.length);
       console.log('First 500 chars of first page:', firstPageText.substring(0, 500));
       
-      // Extract Date
-      const dateMatch = text.match(/(\d{1,2}[-/]\w{3}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
+      // Extract using exact C# patterns
+      const dateMatch = firstPageText.match(/Date:\s+(\d{2}-[A-Za-z]{3}-\d{4})/);
       const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
         day: '2-digit', 
         month: 'short', 
         year: 'numeric' 
       });
       
-      // Extract Employee Name - look in first page first
-      let nameMatch = firstPageText.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
-      if (!nameMatch) {
-        nameMatch = text.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
-      }
+      const employeeNameMatch = firstPageText.match(/Employee Name:\s+([A-Za-z\s]+)/);
+      let employeeName = employeeNameMatch ? employeeNameMatch[1].trim() : 'Unknown Employee';
       
-      let employeeName = nameMatch ? nameMatch[1].trim() : 'Unknown Employee';
-      
+      // If name extraction fails, try filename fallback
       if (employeeName === 'Unknown Employee') {
         const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
         if (fileNameMatch) {
@@ -149,24 +85,25 @@ const PdfReader = () => {
         }
       }
       
-      // Extract PAN with improved logic
-      const employeePAN = extractPanFromText(text, file.name);
+      // Extract PAN using exact C# pattern
+      const employeePANMatch = firstPageText.match(/Employee PAN:\s+([A-Z0-9]+)/);
+      const employeePAN = employeePANMatch ? employeePANMatch[1] : '';
       
-      // Extract Financial Year
-      const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
-      let financialYear = fyMatch ? fyMatch[1] : '2024-25';
-      if (!financialYear.includes('-')) {
-        financialYear = financialYear.substring(0, 4) + '-' + financialYear.substring(4);
-      }
+      console.log('PAN extraction attempt:', {
+        pattern: '/Employee PAN:\\s+([A-Z0-9]+)/',
+        found: employeePANMatch,
+        extractedPAN: employeePAN
+      });
       
-      // Extract Assessment Year
-      const ayMatch = text.match(/Assessment Year[:\s]*(\d{4}[-]?\d{2})/i);
-      let assessmentYear = ayMatch ? ayMatch[1] : '2025-26';
-      if (!assessmentYear.includes('-')) {
-        assessmentYear = assessmentYear.substring(0, 4) + '-' + assessmentYear.substring(4);
-      }
+      // Extract Financial Year using exact C# pattern
+      const financialYearMatch = firstPageText.match(/Financial Year:\s+(\d{4}-\d{2})/);
+      const financialYear = financialYearMatch ? financialYearMatch[1] : '2024-25';
       
-      console.log('Extracted data:', {
+      // Extract Assessment Year using exact C# pattern
+      const assessmentYearMatch = firstPageText.match(/Assessment Year:\s+(\d{4}-\d{2})/);
+      const assessmentYear = assessmentYearMatch ? assessmentYearMatch[1] : '2025-26';
+      
+      console.log('Extracted data using C# patterns:', {
         date,
         employeeName,
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
