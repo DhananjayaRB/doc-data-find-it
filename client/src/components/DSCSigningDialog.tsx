@@ -260,11 +260,33 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
             </div>
           )}
 
-          {(error || certificates.length === 0) && !isLoading && (
-            <DSCBrowserLimitations onRetryDetection={checkDSCAvailability} />
+          {!bridgeReady && !isLoading && (
+            <Tabs defaultValue="bridge" className="space-y-4">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="bridge">DSC Bridge Service</TabsTrigger>
+                <TabsTrigger value="browser">Browser Method</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="bridge" className="space-y-4">
+                <DSCBridgeConnector 
+                  onCertificatesDetected={(certs) => {
+                    setCertificates(certs);
+                    setIsDSCAvailable(certs.length > 0);
+                  }}
+                  onBridgeReady={(ready) => {
+                    setBridgeReady(ready);
+                    setUseBridge(ready);
+                  }}
+                />
+              </TabsContent>
+              
+              <TabsContent value="browser" className="space-y-4">
+                <DSCBrowserLimitations onRetryDetection={checkDSCAvailability} />
+              </TabsContent>
+            </Tabs>
           )}
 
-          {isDSCAvailable && certificates.length > 0 && !isLoading && (
+          {(bridgeReady || isDSCAvailable) && certificates.length > 0 && !isLoading && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="certificate">Select Certificate</Label>
