@@ -8,6 +8,7 @@ interface EmployeeData {
   employeePath: string;
   companyName: string;
   document: string; // base64 data
+  pdfread: string; // first page extracted data
 }
 
 interface ApiUploadResponse {

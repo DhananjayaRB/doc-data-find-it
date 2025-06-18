@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { ExtractedData } from '@/components/ExtractedData';
@@ -18,6 +17,7 @@ interface PdfData {
   assessmentYear: string;
   employeePath: string;
   companyName: string;
+  pdfread: string; // first page extracted data
   uploadStatus?: 'pending' | 'uploading' | 'success' | 'error';
   uploadId?: string;
 }
@@ -40,29 +40,21 @@ const PdfReader = () => {
   const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
 
-  const enhancedPanExtraction = (text: string, fileName: string): string => {
-    console.log(`Enhanced PAN extraction for: ${fileName}`);
+  const simplePanExtraction = (text: string, fileName: string): string => {
+    console.log(`Simple PAN extraction for: ${fileName}`);
     console.log('First 500 chars of PDF text:', text.substring(0, 500));
     
     // Focus on first page content - split by form feed or page breaks
     const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
     
-    // Enhanced PAN patterns with more variations
+    // Simple PAN patterns - just find any 10-character alphanumeric that looks like PAN
     const panPatterns = [
-      // Standard PAN format with word boundaries
+      // Standard PAN format
       /\b([A-Z]{5}[0-9]{4}[A-Z]{1})\b/g,
-      // PAN with spaces, dots, or dashes
-      /\b([A-Z]{5}[\s\.\-]?[0-9]{4}[\s\.\-]?[A-Z]{1})\b/g,
-      // PAN after common keywords (case insensitive)
-      /(?:PAN|Permanent\s+Account\s+Number|P\.A\.N\.?|Tax\s+ID|Income\s+Tax\s+PAN)[\s\:\-]+([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
-      // PAN in parentheses, brackets, or quotes
-      /[\(\[\"\'"]([A-Z]{5}[0-9]{4}[A-Z]{1})[\)\]\"\'"]?/g,
-      // PAN in form fields or table structures
-      /PAN[\s\:\-]*([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
-      // PAN with "No." or "Number"
-      /(?:PAN\s+(?:No|Number)[\.\:]?\s*)([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
-      // Find PAN in employee information sections
-      /(?:Employee|Assessee)[\s\S]{0,200}([A-Z]{5}[0-9]{4}[A-Z]{1})/gi
+      // PAN with common keywords
+      /(?:PAN|Employee PAN|P\.A\.N\.?)[\s\:\-]*([A-Z0-9]{10})/gi,
+      // Any 10-character alphanumeric that might be PAN
+      /\b([A-Z]{3,}[0-9]{3,}[A-Z0-9]{1,})\b/g
     ];
 
     // Try patterns on first page text first
@@ -70,27 +62,15 @@ const PdfReader = () => {
       const matches = firstPageText.matchAll(pattern);
       for (const match of matches) {
         const pan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
-        if (pan.length === 10 && /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
-          console.log(`PAN found on first page using pattern: ${pattern} -> ${pan}`);
-          return pan;
-        }
-      }
-    }
-
-    // If not found on first page, try full text
-    for (const pattern of panPatterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        const pan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
-        if (pan.length === 10 && /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
-          console.log(`PAN found in full text using pattern: ${pattern} -> ${pan}`);
+        if (pan.length === 10) {
+          console.log(`PAN found: ${pan}`);
           return pan;
         }
       }
     }
 
     // Try to find PAN in filename
-    const fileNamePan = fileName.match(/([A-Z]{5}[0-9]{4}[A-Z]{1})/);
+    const fileNamePan = fileName.match(/([A-Z0-9]{10})/);
     if (fileNamePan) {
       console.log(`PAN found in filename: ${fileNamePan[1]}`);
       return fileNamePan[1];
@@ -113,6 +93,7 @@ const PdfReader = () => {
       console.log('Extracted PDF text length:', pdfData.text.length);
       
       const text = pdfData.text;
+      const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
       
       // Extract Date
       const dateMatch = text.match(/(\d{1,2}[-/]\w{3}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
@@ -133,8 +114,8 @@ const PdfReader = () => {
         }
       }
       
-      // Enhanced PAN extraction
-      const employeePAN = enhancedPanExtraction(text, file.name);
+      // Simple PAN extraction without validation
+      const employeePAN = simplePanExtraction(text, file.name);
       
       // Extract Financial Year
       const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
@@ -155,7 +136,8 @@ const PdfReader = () => {
         employeeName,
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
-        assessmentYear
+        assessmentYear,
+        pdfread: firstPageText.substring(0, 1000) // First 1000 chars
       });
       
       return {
@@ -163,7 +145,8 @@ const PdfReader = () => {
         employeeName,
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
-        assessmentYear
+        assessmentYear,
+        pdfread: firstPageText.substring(0, 1000)
       };
       
     } catch (error) {
@@ -190,7 +173,8 @@ const PdfReader = () => {
         employeeName: fallbackName,
         employeePAN: 'EXTRACTION_FAILED',
         financialYear: '2024-25',
-        assessmentYear: '2025-26'
+        assessmentYear: '2025-26',
+        pdfread: 'Error reading PDF content'
       };
     }
   };
@@ -309,7 +293,23 @@ const PdfReader = () => {
     setIsApiUploading(true);
     
     try {
-      const result = await uploadToApi(uploadedFiles);
+      // Convert PdfData to EmployeeData format
+      const apiFiles = uploadedFiles.map(({ file, data }) => ({
+        file,
+        data: {
+          date: data.date,
+          employeeName: data.employeeName,
+          employeePAN: data.employeePAN,
+          financialYear: data.financialYear,
+          assessmentYear: data.assessmentYear,
+          employeePath: data.employeePath,
+          companyName: data.companyName,
+          document: '', // Will be filled by the API service
+          pdfread: data.pdfread
+        }
+      }));
+
+      const result = await uploadToApi(apiFiles);
       
       if (result.success) {
         toast({
