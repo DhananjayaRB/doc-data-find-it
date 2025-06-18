@@ -115,7 +115,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       <div className="text-center">
         <input
           type="file"
-          webkitdirectory=""
+          {...({ webkitdirectory: "" } as any)}
           multiple
           onChange={handleFolderSelect}
           className="hidden"

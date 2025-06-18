@@ -21,6 +21,7 @@ const PdfReader = () => {
   const [extractedDataList, setExtractedDataList] = useState<PdfData[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
 
   const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath'>> => {
@@ -38,6 +39,13 @@ const PdfReader = () => {
   };
 
   const handleFileUpload = async (file: File, employeePath: string) => {
+    // Clear previous data when starting a new folder upload
+    if (!processingStarted) {
+      console.log('Starting new folder processing, clearing previous data');
+      setExtractedDataList([]);
+      setProcessingStarted(true);
+    }
+
     setIsProcessing(true);
     setError(null);
 
@@ -98,6 +106,11 @@ const PdfReader = () => {
       console.error('Processing error:', err);
     } finally {
       setIsProcessing(false);
+      
+      // Reset processing flag after a short delay to allow for multiple files
+      setTimeout(() => {
+        setProcessingStarted(false);
+      }, 3000);
     }
   };
 
