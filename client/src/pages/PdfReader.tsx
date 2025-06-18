@@ -105,11 +105,27 @@ const PdfReader = () => {
       let firstPageText = '';
       
       try {
-        const pdfParse = await import('pdf-parse');
+        // Use pdfjs-dist for browser-compatible PDF parsing
+        const pdfjsLib = await import('pdfjs-dist');
+        
+        // Set up worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+        
         const uint8Array = new Uint8Array(arrayBuffer);
-        const pdfData = await pdfParse.default(uint8Array);
-        text = pdfData.text;
-        firstPageText = text.split('\f')[0] || text.substring(0, 3000);
+        const loadingTask = pdfjsLib.getDocument(uint8Array);
+        const pdf = await loadingTask.promise;
+        
+        // Get first page
+        const page = await pdf.getPage(1);
+        const textContent = await page.getTextContent();
+        
+        // Extract text from first page
+        text = textContent.items
+          .filter((item: any) => item.str && item.str.trim())
+          .map((item: any) => item.str)
+          .join(' ');
+        
+        firstPageText = text;
         console.log('PDF text extracted successfully, length:', text.length);
         console.log('First page text:', firstPageText.substring(0, 1000));
       } catch (pdfError) {
