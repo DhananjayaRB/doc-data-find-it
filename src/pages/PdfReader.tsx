@@ -2,10 +2,13 @@
 import React, { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { ExtractedData } from '@/components/ExtractedData';
-import { FileText, Upload, CheckCircle, AlertTriangle } from 'lucide-react';
+import { FailedPanList } from '@/components/FailedPanList';
+import { FileText, Upload, CheckCircle, AlertTriangle, Send } from 'lucide-react';
 import { mockAzureUpload } from '@/services/azureUploadService';
+import { uploadToApi } from '@/services/apiUploadService';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 
 interface PdfData {
   date: string;
@@ -14,6 +17,7 @@ interface PdfData {
   financialYear: string;
   assessmentYear: string;
   employeePath: string;
+  companyName: string;
   uploadStatus?: 'pending' | 'uploading' | 'success' | 'error';
   uploadId?: string;
 }
@@ -22,46 +26,70 @@ interface FailedPanExtraction {
   fileName: string;
   employeePath: string;
   employeeName: string;
+  companyName: string;
   extractedText: string;
 }
 
 const PdfReader = () => {
   const [extractedDataList, setExtractedDataList] = useState<PdfData[]>([]);
   const [failedPanExtractions, setFailedPanExtractions] = useState<FailedPanExtraction[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<{ file: File; data: PdfData }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isApiUploading, setIsApiUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
 
-  const extractPanFromText = (text: string, fileName: string): string => {
-    console.log(`Attempting PAN extraction for: ${fileName}`);
+  const enhancedPanExtraction = (text: string, fileName: string): string => {
+    console.log(`Enhanced PAN extraction for: ${fileName}`);
+    console.log('First 500 chars of PDF text:', text.substring(0, 500));
     
-    // Multiple PAN extraction patterns
+    // Focus on first page content - split by form feed or page breaks
+    const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
+    
+    // Enhanced PAN patterns with more variations
     const panPatterns = [
-      // Standard PAN format: ABCDE1234F
+      // Standard PAN format with word boundaries
       /\b([A-Z]{5}[0-9]{4}[A-Z]{1})\b/g,
-      // PAN with spaces or dashes
-      /\b([A-Z]{5}[\s\-]?[0-9]{4}[\s\-]?[A-Z]{1})\b/g,
-      // PAN in parentheses or brackets
-      /[\(\[]([A-Z]{5}[0-9]{4}[A-Z]{1})[\)\]]/g,
-      // PAN after keywords
-      /(?:PAN|Permanent Account Number|P\.A\.N\.?|Tax ID)[\s\:]+([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
-      // PAN in forms or tables
-      /PAN[\s\:]*([A-Z]{5}[0-9]{4}[A-Z]{1})/gi
+      // PAN with spaces, dots, or dashes
+      /\b([A-Z]{5}[\s\.\-]?[0-9]{4}[\s\.\-]?[A-Z]{1})\b/g,
+      // PAN after common keywords (case insensitive)
+      /(?:PAN|Permanent\s+Account\s+Number|P\.A\.N\.?|Tax\s+ID|Income\s+Tax\s+PAN)[\s\:\-]+([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
+      // PAN in parentheses, brackets, or quotes
+      /[\(\[\"\'"]([A-Z]{5}[0-9]{4}[A-Z]{1})[\)\]\"\'"]?/g,
+      // PAN in form fields or table structures
+      /PAN[\s\:\-]*([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
+      // PAN with "No." or "Number"
+      /(?:PAN\s+(?:No|Number)[\.\:]?\s*)([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
+      // Find PAN in employee information sections
+      /(?:Employee|Assessee)[\s\S]{0,200}([A-Z]{5}[0-9]{4}[A-Z]{1})/gi
     ];
 
+    // Try patterns on first page text first
     for (const pattern of panPatterns) {
-      const matches = text.matchAll(pattern);
+      const matches = firstPageText.matchAll(pattern);
       for (const match of matches) {
-        const pan = match[1].replace(/[\s\-]/g, ''); // Remove spaces and dashes
-        if (pan.length === 10) {
-          console.log(`PAN found using pattern: ${pattern} -> ${pan}`);
+        const pan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
+        if (pan.length === 10 && /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+          console.log(`PAN found on first page using pattern: ${pattern} -> ${pan}`);
           return pan;
         }
       }
     }
 
-    // Try to find PAN-like patterns in the filename
+    // If not found on first page, try full text
+    for (const pattern of panPatterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const pan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
+        if (pan.length === 10 && /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
+          console.log(`PAN found in full text using pattern: ${pattern} -> ${pan}`);
+          return pan;
+        }
+      }
+    }
+
+    // Try to find PAN in filename
     const fileNamePan = fileName.match(/([A-Z]{5}[0-9]{4}[A-Z]{1})/);
     if (fileNamePan) {
       console.log(`PAN found in filename: ${fileNamePan[1]}`);
@@ -72,24 +100,21 @@ const PdfReader = () => {
     return '';
   };
 
-  const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath'>> => {
+  const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath' | 'companyName'>> => {
     console.log(`Starting PDF extraction for file: ${file.name}`);
     
     try {
-      // Convert file to buffer for pdf-parse
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
       
-      // Import pdf-parse dynamically
       const pdfParse = await import('pdf-parse');
       const pdfData = await pdfParse.default(buffer);
       
       console.log('Extracted PDF text length:', pdfData.text.length);
       
-      // Extract information using regex patterns
       const text = pdfData.text;
       
-      // Extract Date (look for patterns like DD-MMM-YYYY or DD/MM/YYYY)
+      // Extract Date
       const dateMatch = text.match(/(\d{1,2}[-/]\w{3}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
       const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
         day: '2-digit', 
@@ -97,11 +122,10 @@ const PdfReader = () => {
         year: 'numeric' 
       });
       
-      // Extract Employee Name (look for name patterns, often after "Name:" or similar)
+      // Extract Employee Name
       const nameMatch = text.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
       let employeeName = nameMatch ? nameMatch[1].trim() : 'Unknown Employee';
       
-      // Try to extract from filename if not found in text
       if (employeeName === 'Unknown Employee') {
         const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
         if (fileNameMatch) {
@@ -110,34 +134,16 @@ const PdfReader = () => {
       }
       
       // Enhanced PAN extraction
-      const employeePAN = extractPanFromText(text, file.name);
+      const employeePAN = enhancedPanExtraction(text, file.name);
       
-      // If PAN extraction failed, add to failed list
-      if (!employeePAN) {
-        const failedExtraction: FailedPanExtraction = {
-          fileName: file.name,
-          employeePath: file.webkitRelativePath || file.name,
-          employeeName,
-          extractedText: text.substring(0, 1000) // First 1000 chars for debugging
-        };
-        
-        setFailedPanExtractions(prev => [...prev, failedExtraction]);
-        
-        toast({
-          title: "PAN Extraction Failed",
-          description: `Could not extract PAN for ${employeeName} from ${file.name}`,
-          variant: "destructive",
-        });
-      }
-      
-      // Extract Financial Year (format: YYYY-YY)
+      // Extract Financial Year
       const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
       let financialYear = fyMatch ? fyMatch[1] : '2024-25';
       if (!financialYear.includes('-')) {
         financialYear = financialYear.substring(0, 4) + '-' + financialYear.substring(4);
       }
       
-      // Extract Assessment Year (usually FY + 1)
+      // Extract Assessment Year
       const ayMatch = text.match(/Assessment Year[:\s]*(\d{4}[-]?\d{2})/i);
       let assessmentYear = ayMatch ? ayMatch[1] : '2025-26';
       if (!assessmentYear.includes('-')) {
@@ -163,26 +169,17 @@ const PdfReader = () => {
     } catch (error) {
       console.error('Error parsing PDF:', error);
       
-      // Fallback: try to extract employee name from file path/name
       const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/') : [];
       let fallbackName = 'Unknown Employee';
       
       if (pathParts.length >= 2) {
-        fallbackName = pathParts[1]; // Get employee folder name
+        fallbackName = pathParts[1];
       } else {
         const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
         if (fileNameMatch) {
           fallbackName = fileNameMatch[1].replace(/_/g, ' ');
         }
       }
-      
-      // Add to failed extractions
-      setFailedPanExtractions(prev => [...prev, {
-        fileName: file.name,
-        employeePath: file.webkitRelativePath || file.name,
-        employeeName: fallbackName,
-        extractedText: 'PDF parsing failed'
-      }]);
       
       return {
         date: new Date().toLocaleDateString('en-GB', { 
@@ -199,11 +196,11 @@ const PdfReader = () => {
   };
 
   const handleFileUpload = async (file: File, employeePath: string) => {
-    // Clear previous data when starting a new folder upload
     if (!processingStarted) {
       console.log('Starting new folder processing, clearing previous data');
       setExtractedDataList([]);
       setFailedPanExtractions([]);
+      setUploadedFiles([]);
       setProcessingStarted(true);
     }
 
@@ -213,19 +210,44 @@ const PdfReader = () => {
     try {
       console.log(`Processing file: ${file.name} from path: ${employeePath}`);
 
-      // Extract data from PDF
       const extractedData = await extractDataFromPdf(file);
+      
+      // Extract company name from path
+      const pathParts = employeePath.split('/');
+      const companyName = pathParts[0] || 'Unknown Company';
       
       const employeeData: PdfData = {
         ...extractedData,
         employeePath,
+        companyName,
         uploadStatus: 'pending'
       };
 
-      // Add to the list
+      // Store file for API upload
+      setUploadedFiles(prev => [...prev, { file, data: employeeData }]);
+
+      // If PAN extraction failed, add to failed list
+      if (!extractedData.employeePAN || extractedData.employeePAN === 'EXTRACTION_FAILED') {
+        const failedExtraction: FailedPanExtraction = {
+          fileName: file.name,
+          employeePath,
+          employeeName: extractedData.employeeName,
+          companyName,
+          extractedText: 'PAN extraction failed'
+        };
+        
+        setFailedPanExtractions(prev => [...prev, failedExtraction]);
+        
+        toast({
+          title: "PAN Extraction Failed",
+          description: `Could not extract PAN for ${extractedData.employeeName} from ${file.name}`,
+          variant: "destructive",
+        });
+      }
+
       setExtractedDataList(prev => [...prev, employeeData]);
       
-      // Upload to Azure
+      // Continue with Azure upload
       const updatedData = { ...employeeData, uploadStatus: 'uploading' as const };
       setExtractedDataList(prev => 
         prev.map(item => item.employeePath === employeePath ? updatedData : item)
@@ -268,10 +290,47 @@ const PdfReader = () => {
     } finally {
       setIsProcessing(false);
       
-      // Reset processing flag after a short delay to allow for multiple files
       setTimeout(() => {
         setProcessingStarted(false);
       }, 3000);
+    }
+  };
+
+  const handleApiUpload = async () => {
+    if (uploadedFiles.length === 0) {
+      toast({
+        title: "No Files to Upload",
+        description: "Please process some files first",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsApiUploading(true);
+    
+    try {
+      const result = await uploadToApi(uploadedFiles);
+      
+      if (result.success) {
+        toast({
+          title: "API Upload Successful",
+          description: `${uploadedFiles.length} documents uploaded to API`,
+        });
+      } else {
+        toast({
+          title: "API Upload Failed",
+          description: result.message,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "API Upload Error",
+        description: "Failed to upload documents to API",
+        variant: "destructive",
+      });
+    } finally {
+      setIsApiUploading(false);
     }
   };
 
@@ -289,29 +348,8 @@ const PdfReader = () => {
           </p>
         </div>
 
-        {/* Failed PAN Extractions Alert */}
-        {failedPanExtractions.length > 0 && (
-          <div className="mb-8">
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <div className="font-medium mb-2">
-                  PAN extraction failed for {failedPanExtractions.length} file(s):
-                </div>
-                <ul className="list-disc list-inside space-y-1">
-                  {failedPanExtractions.map((failed, index) => (
-                    <li key={index} className="text-sm">
-                      <strong>{failed.employeeName}</strong> - {failed.fileName}
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-2 text-sm">
-                  Check console logs for detailed extraction attempts.
-                </div>
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
+        {/* Failed PAN Extractions */}
+        <FailedPanList failedExtractions={failedPanExtractions} />
 
         {/* Main Content */}
         <div className="grid gap-8 lg:grid-cols-3">
@@ -326,6 +364,30 @@ const PdfReader = () => {
               isProcessing={isProcessing}
               error={error}
             />
+            
+            {/* API Upload Button */}
+            {uploadedFiles.length > 0 && (
+              <div className="mt-4 pt-4 border-t">
+                <Button 
+                  onClick={handleApiUpload}
+                  disabled={isApiUploading}
+                  className="w-full"
+                  size="lg"
+                >
+                  {isApiUploading ? (
+                    <>
+                      <Upload className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading to API...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      Upload Documents to API ({uploadedFiles.length})
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Results Section */}
@@ -368,22 +430,22 @@ const PdfReader = () => {
               <div className="bg-indigo-100 rounded-full p-3 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
                 <FileText className="h-8 w-8 text-indigo-600" />
               </div>
-              <h4 className="font-semibold text-gray-900 mb-2">PDF Processing</h4>
-              <p className="text-gray-600">Automatically extracts data from Form 16 PDFs</p>
+              <h4 className="font-semibold text-gray-900 mb-2">Enhanced PAN Extraction</h4>
+              <p className="text-gray-600">Advanced patterns to extract PAN from first page of PDFs</p>
             </div>
             <div className="text-center">
               <div className="bg-green-100 rounded-full p-3 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
                 <Upload className="h-8 w-8 text-green-600" />
               </div>
-              <h4 className="font-semibold text-gray-900 mb-2">Easy Upload</h4>
-              <p className="text-gray-600">Drag and drop or click to upload your files</p>
+              <h4 className="font-semibold text-gray-900 mb-2">API Integration</h4>
+              <p className="text-gray-600">Upload documents with base64 conversion to external API</p>
             </div>
             <div className="text-center">
               <div className="bg-purple-100 rounded-full p-3 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
                 <FileText className="h-8 w-8 text-purple-600" />
               </div>
-              <h4 className="font-semibold text-gray-900 mb-2">Structured Output</h4>
-              <p className="text-gray-600">Get organized, structured data instantly</p>
+              <h4 className="font-semibold text-gray-900 mb-2">Failed Extractions Report</h4>
+              <p className="text-gray-600">Download Excel report of failed PAN extractions</p>
             </div>
           </div>
         </div>
