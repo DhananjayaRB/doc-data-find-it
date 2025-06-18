@@ -6,8 +6,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { FileSignature, Shield, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { FileSignature, Shield, AlertTriangle, CheckCircle, Loader2, RefreshCw, HelpCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { DSCSetupInstructions } from './DSCSetupInstructions';
 
 interface DSCCertificate {
   id: string;
