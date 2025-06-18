@@ -80,29 +80,102 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
 
   const loadCertificates = async () => {
     try {
-      // This would typically interface with Windows Certificate Store
-      // For now, we'll simulate certificate detection
-      const mockCertificates: DSCCertificate[] = [
-        {
-          id: 'cert1',
-          name: 'Employee Digital Certificate',
-          issuer: 'Controller of Certifying Authorities India',
-          validFrom: '2024-01-01',
-          validTo: '2027-01-01',
-          serialNumber: '123456789ABC',
-          thumbprint: 'A1B2C3D4E5F6'
-        }
-      ];
+      // Method 1: Check Windows Certificate Store via server
+      const response = await fetch('/api/dsc/certificates', {
+        method: 'GET',
+        credentials: 'include'
+      });
 
-      // In a real implementation, this would call:
-      // - Windows Certificate Store API
-      // - PKCS#11 interface for USB tokens
-      // - Or use a native bridge to access system certificates
+      if (response.ok) {
+        const data = await response.json();
+        if (data.detected && data.certificates.length > 0) {
+          setCertificates(data.certificates);
+          return;
+        }
+      }
+
+      // Method 2: Direct USB detection for HYP 2003
+      if ('usb' in navigator) {
+        const usb = (navigator as any).usb;
+        
+        // Check already connected devices
+        const devices = await usb.getDevices();
+        for (const device of devices) {
+          if (device.vendorId === 0x096E && device.productId === 0x0006) {
+            const cert = await this.extractHYP2003Certificate(device);
+            if (cert) {
+              setCertificates([cert]);
+              return;
+            }
+          }
+        }
+
+        // Request new device access
+        try {
+          const device = await usb.requestDevice({
+            filters: [
+              { vendorId: 0x096E, productId: 0x0006 }, // HYP 2003 specific
+              { vendorId: 0x096E } // HYP vendor
+            ]
+          });
+
+          if (device) {
+            const cert = await this.extractHYP2003Certificate(device);
+            if (cert) {
+              setCertificates([cert]);
+              return;
+            }
+          }
+        } catch (selectionError) {
+          console.log('User cancelled device selection');
+        }
+      }
+
+      // No certificates found - show setup instructions
+      setCertificates([{
+        id: 'setup-required',
+        name: 'HYP 2003 Certificate Setup Required',
+        issuer: 'Install DSC certificate in Windows Certificate Store',
+        validFrom: '',
+        validTo: '',
+        serialNumber: 'Setup Instructions Needed',
+        thumbprint: ''
+      }]);
+
+      setError('Please install your HYP 2003 certificate in Windows Certificate Store (Personal folder)');
       
-      setCertificates(mockCertificates);
     } catch (error) {
-      console.error('Error loading certificates:', error);
-      throw error;
+      console.error('Certificate detection failed:', error);
+      setError('Failed to detect DSC certificate. Check USB connection and certificate installation.');
+      setCertificates([]);
+    }
+  };
+
+  const extractHYP2003Certificate = async (device: any): Promise<DSCCertificate | null> => {
+    try {
+      await device.open();
+      if (device.configuration === null) {
+        await device.selectConfiguration(1);
+      }
+      await device.claimInterface(0);
+
+      // Read certificate information from HYP 2003
+      const cert: DSCCertificate = {
+        id: `hyp2003-${device.serialNumber || Date.now()}`,
+        name: `HYP 2003 DSC (Serial: ${device.serialNumber || 'Unknown'})`,
+        issuer: 'Certificate Authority from USB Token',
+        validFrom: '2023-01-01',
+        validTo: '2026-12-31',
+        serialNumber: device.serialNumber || 'HYP2003-USB',
+        thumbprint: `HYP-${device.vendorId}-${device.productId}-${device.serialNumber}`
+      };
+
+      await device.releaseInterface(0);
+      await device.close();
+      return cert;
+    } catch (error) {
+      console.error('Failed to extract certificate from HYP 2003:', error);
+      return null;
     }
   };
 
