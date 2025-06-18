@@ -43,98 +43,117 @@ const PdfReader = () => {
   const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath' | 'companyName'>> => {
     console.log(`Starting PDF extraction for file: ${file.name}`);
     
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+    return new Promise((resolve, reject) => {
+      const fileReader = new FileReader();
       
-      const pdfParse = await import('pdf-parse');
-      const pdfData = await pdfParse.default(buffer);
-      
-      console.log('Extracted PDF text length:', pdfData.text.length);
-      
-      const text = pdfData.text;
-      
-      // Get first page content - use multiple splitting methods
-      let firstPageText = text.split('\f')[0];
-      if (!firstPageText || firstPageText.length < 100) {
-        firstPageText = text.split('\n\n\n')[0];
-      }
-      if (!firstPageText || firstPageText.length < 100) {
-        firstPageText = text.substring(0, 3000);
-      }
-      
-      console.log('First page text length:', firstPageText.length);
-      console.log('First 500 chars of first page:', firstPageText.substring(0, 500));
-      
-      // Extract using exact C# patterns
-      const dateMatch = firstPageText.match(/Date:\s+(\d{2}-[A-Za-z]{3}-\d{4})/);
-      const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
-        day: '2-digit', 
-        month: 'short', 
-        year: 'numeric' 
-      });
-      
-      const employeeNameMatch = firstPageText.match(/Employee Name:\s+([A-Za-z\s]+)/);
-      let employeeName = employeeNameMatch ? employeeNameMatch[1].trim() : 'Unknown Employee';
-      
-      // If name extraction fails, try filename fallback
-      if (employeeName === 'Unknown Employee') {
-        const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
-        if (fileNameMatch) {
-          employeeName = fileNameMatch[1].replace(/_/g, ' ');
-        }
-      }
-      
-      // Extract PAN using exact C# pattern
-      const employeePANMatch = firstPageText.match(/Employee PAN:\s+([A-Z0-9]+)/);
-      const employeePAN = employeePANMatch ? employeePANMatch[1] : '';
-      
-      console.log('PAN extraction attempt:', {
-        pattern: '/Employee PAN:\\s+([A-Z0-9]+)/',
-        found: employeePANMatch,
-        extractedPAN: employeePAN
-      });
-      
-      // Extract Financial Year using exact C# pattern
-      const financialYearMatch = firstPageText.match(/Financial Year:\s+(\d{4}-\d{2})/);
-      const financialYear = financialYearMatch ? financialYearMatch[1] : '2024-25';
-      
-      // Extract Assessment Year using exact C# pattern
-      const assessmentYearMatch = firstPageText.match(/Assessment Year:\s+(\d{4}-\d{2})/);
-      const assessmentYear = assessmentYearMatch ? assessmentYearMatch[1] : '2025-26';
-      
-      console.log('Extracted data using C# patterns:', {
-        date,
-        employeeName,
-        employeePAN: employeePAN || 'EXTRACTION_FAILED',
-        financialYear,
-        assessmentYear,
-        pdfreadLength: firstPageText.length
-      });
-      
-      return {
-        date,
-        employeeName,
-        employeePAN: employeePAN || 'EXTRACTION_FAILED',
-        financialYear,
-        assessmentYear,
-        pdfread: firstPageText // Complete first page raw data
+      fileReader.onload = function() {
+        const typedArray = new Uint8Array(this.result as ArrayBuffer);
+        
+        // Load PDF.js from CDN if not already loaded
+        const loadPdfJs = () => {
+          return new Promise<void>((resolveLoad) => {
+            if ((window as any).pdfjsLib) {
+              resolveLoad();
+              return;
+            }
+            
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js';
+            script.onload = () => {
+              (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+              resolveLoad();
+            };
+            document.head.appendChild(script);
+          });
+        };
+        
+        loadPdfJs().then(() => {
+          (window as any).pdfjsLib.getDocument(typedArray).promise.then((pdf: any) => {
+            pdf.getPage(1).then((page: any) => {
+              page.getTextContent().then((textContent: any) => {
+                let text = '';
+                textContent.items.forEach((item: any) => {
+                  text += item.str + ' ';
+                });
+                
+                console.log('PDF text extracted successfully, length:', text.length);
+                console.log('First page text:', text.substring(0, 1000));
+                
+                // Use exact C# regex patterns for extraction
+                const dateMatch = text.match(/Date:\s+(\d{2}-[A-Za-z]{3}-\d{4})/);
+                const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
+                  day: '2-digit', 
+                  month: 'short', 
+                  year: 'numeric' 
+                });
+                
+                const employeeNameMatch = text.match(/Employee Name:\s+([A-Za-z\s]+)/);
+                let employeeName = employeeNameMatch ? employeeNameMatch[1].trim() : '';
+                
+                if (!employeeName) {
+                  const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
+                  if (fileNameMatch) {
+                    employeeName = fileNameMatch[1].replace(/_/g, ' ');
+                  } else {
+                    employeeName = 'Unknown Employee';
+                  }
+                }
+                
+                // Use exact C# regex pattern for PAN extraction
+                const employeePANMatch = text.match(/Employee PAN:\s+([A-Z0-9]+)/);
+                const employeePAN = employeePANMatch ? employeePANMatch[1] : '';
+                
+                const financialYearMatch = text.match(/Financial Year:\s+(\d{4}-\d{2})/);
+                const financialYear = financialYearMatch ? financialYearMatch[1] : '2024-25';
+                
+                const assessmentYearMatch = text.match(/Assessment Year:\s+(\d{4}-\d{2})/);
+                const assessmentYear = assessmentYearMatch ? assessmentYearMatch[1] : '2025-26';
+                
+                const rawFirstPageText = text.substring(0, 2000);
+                
+                console.log('Extracted data:', {
+                  date,
+                  employeeName,
+                  employeePAN: employeePAN || 'EXTRACTION_FAILED',
+                  financialYear,
+                  assessmentYear,
+                  pdfread: rawFirstPageText
+                });
+                
+                resolve({
+                  date,
+                  employeeName,
+                  employeePAN: employeePAN || 'EXTRACTION_FAILED',
+                  financialYear,
+                  assessmentYear,
+                  pdfread: rawFirstPageText
+                });
+              }).catch((error: any) => {
+                console.error('Error getting text content:', error);
+                reject(error);
+              });
+            }).catch((error: any) => {
+              console.error('Error getting page:', error);
+              reject(error);
+            });
+          }).catch((error: any) => {
+            console.error('Error loading PDF:', error);
+            reject(error);
+          });
+        }).catch((error: any) => {
+          console.error('Error loading PDF.js:', error);
+          reject(error);
+        });
       };
       
-    } catch (error) {
+      fileReader.onerror = () => {
+        console.error('Error reading file');
+        reject(new Error('Error reading file'));
+      };
+      
+      fileReader.readAsArrayBuffer(file);
+    }).catch((error) => {
       console.error('Error parsing PDF:', error);
-      
-      const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/') : [];
-      let fallbackName = 'Unknown Employee';
-      
-      if (pathParts.length >= 2) {
-        fallbackName = pathParts[1];
-      } else {
-        const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
-        if (fileNameMatch) {
-          fallbackName = fileNameMatch[1].replace(/_/g, ' ');
-        }
-      }
       
       return {
         date: new Date().toLocaleDateString('en-GB', { 
@@ -142,35 +161,24 @@ const PdfReader = () => {
           month: 'short', 
           year: 'numeric' 
         }),
-        employeeName: fallbackName,
+        employeeName: file.name.replace('_Form16.pdf', '').replace(/_/g, ' '),
         employeePAN: 'EXTRACTION_FAILED',
         financialYear: '2024-25',
         assessmentYear: '2025-26',
         pdfread: 'Error reading PDF content'
       };
-    }
+    });
   };
 
   const handleFileUpload = async (file: File, employeePath: string) => {
-    if (!processingStarted) {
-      console.log('Starting new folder processing, clearing previous data');
-      setExtractedDataList([]);
-      setFailedPanExtractions([]);
-      setUploadedFiles([]);
-      setProcessingStarted(true);
-    }
-
-    setIsProcessing(true);
     setError(null);
-
+    setIsProcessing(true);
+    
     try {
       console.log(`Processing file: ${file.name} from path: ${employeePath}`);
-
-      const extractedData = await extractDataFromPdf(file);
       
-      // Extract company name from path
-      const pathParts = employeePath.split('/');
-      const companyName = pathParts[0] || 'Unknown Company';
+      const extractedData = await extractDataFromPdf(file);
+      const companyName = employeePath.split('/')[0];
       
       const employeeData: PdfData = {
         ...extractedData,
@@ -179,182 +187,154 @@ const PdfReader = () => {
         uploadStatus: 'pending'
       };
 
-      // Store file for API upload
-      setUploadedFiles(prev => [...prev, { file, data: employeeData }]);
-
-      // If PAN extraction failed, add to failed list
-      if (!extractedData.employeePAN || extractedData.employeePAN === 'EXTRACTION_FAILED') {
+      if (employeeData.employeePAN === 'EXTRACTION_FAILED') {
         const failedExtraction: FailedPanExtraction = {
           fileName: file.name,
           employeePath,
-          employeeName: extractedData.employeeName,
+          employeeName: employeeData.employeeName,
           companyName,
-          extractedText: extractedData.pdfread.substring(0, 500) // First 500 chars for debugging
+          extractedText: employeeData.pdfread
         };
         
         setFailedPanExtractions(prev => [...prev, failedExtraction]);
-        
-        toast({
-          title: "PAN Extraction Failed",
-          description: `Could not extract PAN for ${extractedData.employeeName} from ${file.name}`,
-          variant: "destructive",
-        });
       }
 
+      const fileWithData = { file, data: employeeData };
+      setUploadedFiles(prev => [...prev, fileWithData]);
       setExtractedDataList(prev => [...prev, employeeData]);
-      
-      // Continue with Azure upload
-      const updatedData = { ...employeeData, uploadStatus: 'uploading' as const };
-      setExtractedDataList(prev => 
-        prev.map(item => item.employeePath === employeePath ? updatedData : item)
-      );
 
-      const uploadResult = await mockAzureUpload(file, employeeData);
-      
-      if (uploadResult.success) {
-        setExtractedDataList(prev =>
-          prev.map(item =>
-            item.employeePath === employeePath
-              ? { ...item, uploadStatus: 'success', uploadId: uploadResult.uploadId }
-              : item
-          )
-        );
-        
-        toast({
-          title: "Upload Successful",
-          description: `Data for ${employeeData.employeeName} uploaded to Azure`,
-        });
-      } else {
-        setExtractedDataList(prev =>
-          prev.map(item =>
-            item.employeePath === employeePath
-              ? { ...item, uploadStatus: 'error' }
-              : item
-          )
-        );
-        
-        toast({
-          title: "Upload Failed",
-          description: uploadResult.message,
-          variant: "destructive",
-        });
-      }
+      await mockAzureUpload(file, {
+        date: employeeData.date,
+        employeeName: employeeData.employeeName,
+        employeePAN: employeeData.employeePAN,
+        financialYear: employeeData.financialYear,
+        assessmentYear: employeeData.assessmentYear,
+        employeePath: employeeData.employeePath
+      });
 
-    } catch (err) {
-      setError('Failed to process PDF file');
-      console.error('Processing error:', err);
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setError(`Failed to process ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
-      
-      setTimeout(() => {
-        setProcessingStarted(false);
-      }, 3000);
     }
   };
 
-  const handleApiUpload = async () => {
+  const handleBulkApiUpload = async () => {
     if (uploadedFiles.length === 0) {
       toast({
-        title: "No Files to Upload",
-        description: "Please process some files first",
-        variant: "destructive",
+        title: "No files to upload",
+        description: "Please upload some PDF files first",
+        variant: "destructive"
       });
       return;
     }
 
     setIsApiUploading(true);
-    
-    try {
-      // Convert PdfData to EmployeeData format
-      const apiFiles = uploadedFiles.map(({ file, data }) => ({
-        file,
-        data: {
-          date: data.date,
-          employeeName: data.employeeName,
-          employeePAN: data.employeePAN,
-          financialYear: data.financialYear,
-          assessmentYear: data.assessmentYear,
-          employeePath: data.employeePath,
-          companyName: data.companyName,
-          document: '', // Will be filled by the API service
-          pdfread: data.pdfread
-        }
-      }));
+    setError(null);
 
-      const result = await uploadToApi(apiFiles);
+    try {
+      const result = await uploadToApi(uploadedFiles);
       
       if (result.success) {
         toast({
-          title: "API Upload Successful",
-          description: `${uploadedFiles.length} documents uploaded to API`,
+          title: "Upload Successful!",
+          description: `Successfully uploaded ${uploadedFiles.length} files to the API`,
+          variant: "default"
         });
+        
+        setUploadedFiles(prev => 
+          prev.map(item => ({
+            ...item,
+            data: { ...item.data, uploadStatus: 'success' as const }
+          }))
+        );
+        
+        setExtractedDataList(prev => 
+          prev.map(item => ({ ...item, uploadStatus: 'success' as const }))
+        );
       } else {
-        toast({
-          title: "API Upload Failed",
-          description: result.message,
-          variant: "destructive",
-        });
+        throw new Error(result.message || 'Upload failed');
       }
     } catch (error) {
+      console.error('API upload error:', error);
+      setError(`API upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      
       toast({
-        title: "API Upload Error",
-        description: "Failed to upload documents to API",
-        variant: "destructive",
+        title: "Upload Failed",
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+        variant: "destructive"
       });
     } finally {
       setIsApiUploading(false);
     }
   };
 
+  const exportAsJSON = () => {
+    const dataStr = JSON.stringify(extractedDataList, null, 2);
+    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    
+    const exportFileDefaultName = 'extracted_employee_data.json';
+    
+    const linkElement = document.createElement('a');
+    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('download', exportFileDefaultName);
+    linkElement.click();
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-7xl mx-auto">
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center mb-4">
-            <FileText className="h-12 w-12 text-indigo-600 mr-3" />
-            <h1 className="text-4xl font-bold text-gray-900">PDF Data Extractor</h1>
-          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-2">
+            <FileText className="h-8 w-8 text-indigo-600" />
+            PDF Data Extractor
+          </h1>
           <p className="text-lg text-gray-600">
-            Upload your company folder with Form 16 PDFs to extract and upload employee information
+            Extract employee information from Form 16 PDFs
           </p>
         </div>
 
-        {/* Failed PAN Extractions */}
-        <FailedPanList failedExtractions={failedPanExtractions} />
+        {error && (
+          <Alert className="mb-6 bg-red-50 border-red-200">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-800">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
 
-        {/* Main Content */}
-        <div className="grid gap-8 lg:grid-cols-3">
-          {/* Upload Section */}
-          <div className="lg:col-span-1 bg-white rounded-xl shadow-lg p-6">
-            <div className="flex items-center mb-4">
-              <Upload className="h-6 w-6 text-indigo-600 mr-2" />
-              <h2 className="text-xl font-semibold text-gray-900">Upload Folder</h2>
-            </div>
+        <div className="grid lg:grid-cols-2 gap-6">
+          <div className="space-y-6">
             <FileUpload 
               onFileUpload={handleFileUpload}
               isProcessing={isProcessing}
               error={error}
             />
             
-            {/* API Upload Button */}
-            {uploadedFiles.length > 0 && (
-              <div className="mt-4 pt-4 border-t">
+            {extractedDataList.length > 0 && (
+              <div className="flex gap-3">
                 <Button 
-                  onClick={handleApiUpload}
-                  disabled={isApiUploading}
-                  className="w-full"
-                  size="lg"
+                  onClick={exportAsJSON}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Export JSON
+                </Button>
+                <Button 
+                  onClick={handleBulkApiUpload}
+                  disabled={isApiUploading || uploadedFiles.length === 0}
+                  className="flex-1"
                 >
                   {isApiUploading ? (
                     <>
-                      <Upload className="h-4 w-4 mr-2 animate-spin" />
-                      Uploading to API...
+                      <Upload className="mr-2 h-4 w-4 animate-spin" />
+                      Uploading...
                     </>
                   ) : (
                     <>
-                      <Send className="h-4 w-4 mr-2" />
-                      Upload Documents to API ({uploadedFiles.length})
+                      <Send className="mr-2 h-4 w-4" />
+                      Upload to API ({uploadedFiles.length})
                     </>
                   )}
                 </Button>
@@ -362,63 +342,32 @@ const PdfReader = () => {
             )}
           </div>
 
-          {/* Results Section */}
-          <div className="lg:col-span-2 bg-white rounded-xl shadow-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-gray-900">Processed Employees</h2>
-              {extractedDataList.length > 0 && (
-                <div className="flex items-center text-sm text-gray-600">
-                  <CheckCircle className="h-4 w-4 mr-1" />
-                  {extractedDataList.filter(item => item.uploadStatus === 'success').length} / {extractedDataList.length} uploaded
+          <div className="space-y-6">
+            {extractedDataList.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">Processed Employees</h2>
+                  <div className="flex items-center text-sm text-gray-500">
+                    <CheckCircle className="h-4 w-4 text-green-500 mr-1" />
+                    {extractedDataList.length} / {extractedDataList.length} uploaded
+                  </div>
                 </div>
-              )}
-            </div>
-            
-            {extractedDataList.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-                <FileText className="h-12 w-12 mb-4 opacity-50" />
-                <p className="text-lg">No employees processed yet</p>
-                <p className="text-sm">Upload a folder to see extracted information here</p>
-              </div>
-            ) : (
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                {extractedDataList.map((data, index) => (
-                  <ExtractedData 
-                    key={`${data.employeePath}-${index}`}
-                    data={data}
-                    isProcessing={data.uploadStatus === 'uploading'}
-                  />
-                ))}
+                
+                <div className="space-y-4 max-h-96 overflow-y-auto">
+                  {extractedDataList.map((data, index) => (
+                    <ExtractedData 
+                      key={index} 
+                      data={data} 
+                      isProcessing={false}
+                    />
+                  ))}
+                </div>
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Features Section */}
-        <div className="mt-12 bg-white rounded-xl shadow-lg p-8">
-          <h3 className="text-2xl font-bold text-gray-900 mb-6 text-center">Features</h3>
-          <div className="grid md:grid-cols-3 gap-6">
-            <div className="text-center">
-              <div className="bg-indigo-100 rounded-full p-3 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-                <FileText className="h-8 w-8 text-indigo-600" />
-              </div>
-              <h4 className="font-semibold text-gray-900 mb-2">Enhanced PAN Extraction</h4>
-              <p className="text-gray-600">Advanced patterns to extract PAN from first page of PDFs</p>
-            </div>
-            <div className="text-center">
-              <div className="bg-green-100 rounded-full p-3 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-                <Upload className="h-8 w-8 text-green-600" />
-              </div>
-              <h4 className="font-semibold text-gray-900 mb-2">API Integration</h4>
-              <p className="text-gray-600">Upload documents with base64 conversion to external API</p>
-            </div>
-            <div className="text-center">
-              <div className="bg-purple-100 rounded-full p-3 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-                <FileText className="h-8 w-8 text-purple-600" />
-              </div>
-              <h4 className="font-semibold text-gray-900 mb-2">Failed Extractions Report</h4>
-              <p className="text-gray-600">Download Excel report of failed PAN extractions</p>
-            </div>
+            
+            {failedPanExtractions.length > 0 && (
+              <FailedPanList failedExtractions={failedPanExtractions} />
+            )}
           </div>
         </div>
       </div>

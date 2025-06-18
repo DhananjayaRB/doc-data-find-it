@@ -36,8 +36,15 @@ export const uploadToApi = async (
 ): Promise<ApiUploadResponse> => {
   try {
     console.log('Converting files to base64 and preparing payload...');
-    
-    const payload = await Promise.all(
+
+    // Helper to chunk array into batches of 10
+    const chunkArray = <T,>(arr: T[], size: number): T[][] =>
+      Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
+        arr.slice(i * size, i * size + size)
+      );
+
+    // Convert all files to base64 and prepare payloads
+    const allPayloads = await Promise.all(
       files.map(async ({ file, data }) => {
         const base64Document = await convertFileToBase64(file);
         return {
@@ -47,34 +54,42 @@ export const uploadToApi = async (
       })
     );
 
-    console.log('Uploading to API:', {
-      url: 'https://ap.store.in/organizat/storeawsformfile',
-      filesCount: payload.length
-    });
+    // Split into batches of 10
+    const batches = chunkArray(allPayloads, 10);
+    let allSuccess = true;
+    let messages: string[] = [];
+    let uploadIds: string[] = [];
 
-    const response = await fetch('https://ap.store.in/organizat/storeawsformfile', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      console.log(`Uploading batch ${i + 1} of ${batches.length} to API...`);
+      const response = await fetch('https://apiv1.resolvepay.in/organization/storeawsformfile-client', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ form16DocumentAlls: batch }),
+      });
 
-    if (!response.ok) {
-      throw new Error(`API upload failed: ${response.statusText}`);
+      if (!response.ok) {
+        allSuccess = false;
+        messages.push(`Batch ${i + 1} failed: ${response.statusText}`);
+        continue;
+      }
+
+      const result = await response.json();
+      messages.push(`Batch ${i + 1} uploaded successfully`);
+      if (result.uploadId) uploadIds.push(result.uploadId);
     }
 
-    const result = await response.json();
-    
     return {
-      success: true,
-      message: 'Documents uploaded successfully to API',
-      uploadId: result.uploadId || `api-${Date.now()}`
+      success: allSuccess,
+      message: messages.join('; '),
+      uploadId: uploadIds.join(',') || `api-${Date.now()}`
     };
 
   } catch (error) {
     console.error('API upload error:', error);
-    
     return {
       success: false,
       message: error instanceof Error ? error.message : 'API upload failed'
