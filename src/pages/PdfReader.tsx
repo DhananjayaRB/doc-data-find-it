@@ -40,40 +40,60 @@ const PdfReader = () => {
   const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
 
-  const simplePanExtraction = (text: string, fileName: string): string => {
-    console.log(`Simple PAN extraction for: ${fileName}`);
-    console.log('First 500 chars of PDF text:', text.substring(0, 500));
+  const extractPanFromText = (text: string, fileName: string): string => {
+    console.log(`Extracting PAN from: ${fileName}`);
+    console.log('Raw text for PAN extraction:', text.substring(0, 1000));
     
-    // Focus on first page content - split by form feed or page breaks
-    const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
+    // Split by common page breaks and take first page
+    const firstPageText = text.split('\f')[0] || text.split('\n\n\n')[0] || text.substring(0, 3000);
     
-    // Simple PAN patterns - just find any 10-character alphanumeric that looks like PAN
+    // Enhanced PAN patterns - more comprehensive search
     const panPatterns = [
-      // Standard PAN format
+      // Standard PAN format with word boundaries
       /\b([A-Z]{5}[0-9]{4}[A-Z]{1})\b/g,
-      // PAN with common keywords
-      /(?:PAN|Employee PAN|P\.A\.N\.?)[\s\:\-]*([A-Z0-9]{10})/gi,
-      // Any 10-character alphanumeric that might be PAN
-      /\b([A-Z]{3,}[0-9]{3,}[A-Z0-9]{1,})\b/g
+      // PAN with labels (case insensitive)
+      /(?:Employee\s*PAN|PAN\s*No|PAN\s*Number|P\.A\.N\.?|PAN)\s*[:\-\s]*([A-Z0-9]{10})/gi,
+      // PAN in form fields
+      /(?:PAN|Employee PAN|P\.A\.N\.?)\s*[:\-]*\s*([A-Z]{3,}[0-9]{3,}[A-Z0-9]{1,})/gi,
+      // Any 10-character alphanumeric that looks like PAN
+      /\b([A-Z]{5}[0-9]{4}[A-Z])\b/g,
+      // Relaxed pattern for any potential PAN format
+      /([A-Z]{3,5}[A-Z0-9]{5,7}[A-Z])/g,
+      // Pattern for PAN with spaces or dots
+      /([A-Z]{3,5}[\s\.]*[A-Z0-9]{4,6}[\s\.]*[A-Z])/g
     ];
 
-    // Try patterns on first page text first
+    // Try each pattern on the first page text
     for (const pattern of panPatterns) {
-      const matches = firstPageText.matchAll(pattern);
+      const matches = Array.from(firstPageText.matchAll(pattern));
       for (const match of matches) {
-        const pan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
-        if (pan.length === 10) {
-          console.log(`PAN found: ${pan}`);
-          return pan;
+        let potentialPan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
+        
+        // Accept any 10-character alphanumeric as PAN (no strict validation)
+        if (potentialPan.length === 10 && /^[A-Z0-9]{10}$/.test(potentialPan)) {
+          console.log(`PAN found: ${potentialPan}`);
+          return potentialPan;
         }
       }
     }
 
-    // Try to find PAN in filename
-    const fileNamePan = fileName.match(/([A-Z0-9]{10})/);
+    // Try to extract from filename as fallback
+    const fileNamePan = fileName.match(/([A-Z]{5}[0-9]{4}[A-Z])/);
     if (fileNamePan) {
       console.log(`PAN found in filename: ${fileNamePan[1]}`);
       return fileNamePan[1];
+    }
+
+    // Look for any 10-character sequence in the text
+    const anyTenChar = firstPageText.match(/\b([A-Z]{3,}[A-Z0-9]{7,})\b/g);
+    if (anyTenChar) {
+      for (const potential of anyTenChar) {
+        const cleaned = potential.replace(/[^A-Z0-9]/g, '');
+        if (cleaned.length === 10) {
+          console.log(`Potential PAN found: ${cleaned}`);
+          return cleaned;
+        }
+      }
     }
 
     console.log(`No PAN found for: ${fileName}`);
@@ -93,7 +113,18 @@ const PdfReader = () => {
       console.log('Extracted PDF text length:', pdfData.text.length);
       
       const text = pdfData.text;
-      const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
+      
+      // Get first page content - use multiple splitting methods
+      let firstPageText = text.split('\f')[0];
+      if (!firstPageText || firstPageText.length < 100) {
+        firstPageText = text.split('\n\n\n')[0];
+      }
+      if (!firstPageText || firstPageText.length < 100) {
+        firstPageText = text.substring(0, 3000);
+      }
+      
+      console.log('First page text length:', firstPageText.length);
+      console.log('First 500 chars of first page:', firstPageText.substring(0, 500));
       
       // Extract Date
       const dateMatch = text.match(/(\d{1,2}[-/]\w{3}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
@@ -103,8 +134,12 @@ const PdfReader = () => {
         year: 'numeric' 
       });
       
-      // Extract Employee Name
-      const nameMatch = text.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
+      // Extract Employee Name - look in first page first
+      let nameMatch = firstPageText.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
+      if (!nameMatch) {
+        nameMatch = text.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
+      }
+      
       let employeeName = nameMatch ? nameMatch[1].trim() : 'Unknown Employee';
       
       if (employeeName === 'Unknown Employee') {
@@ -114,8 +149,8 @@ const PdfReader = () => {
         }
       }
       
-      // Simple PAN extraction without validation
-      const employeePAN = simplePanExtraction(text, file.name);
+      // Extract PAN with improved logic
+      const employeePAN = extractPanFromText(text, file.name);
       
       // Extract Financial Year
       const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
@@ -137,7 +172,7 @@ const PdfReader = () => {
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
         assessmentYear,
-        pdfread: firstPageText.substring(0, 1000) // First 1000 chars
+        pdfreadLength: firstPageText.length
       });
       
       return {
@@ -146,7 +181,7 @@ const PdfReader = () => {
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
         assessmentYear,
-        pdfread: firstPageText.substring(0, 1000)
+        pdfread: firstPageText // Complete first page raw data
       };
       
     } catch (error) {
@@ -217,7 +252,7 @@ const PdfReader = () => {
           employeePath,
           employeeName: extractedData.employeeName,
           companyName,
-          extractedText: 'PAN extraction failed'
+          extractedText: extractedData.pdfread.substring(0, 500) // First 500 chars for debugging
         };
         
         setFailedPanExtractions(prev => [...prev, failedExtraction]);
