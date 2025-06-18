@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FileSignature, Shield, AlertTriangle, CheckCircle, Loader2, RefreshCw, HelpCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { DSCSetupInstructions } from './DSCSetupInstructions';
+import { DSCBrowserLimitations } from './DSCBrowserLimitations';
 
 interface DSCCertificate {
   id: string;
@@ -278,16 +278,11 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
             </div>
           )}
 
-          {error && (
-            <Alert className="bg-red-50 border-red-200">
-              <AlertTriangle className="h-4 w-4 text-red-600" />
-              <AlertDescription className="text-red-800">
-                {error}
-              </AlertDescription>
-            </Alert>
+          {(error || certificates.length === 0) && !isLoading && (
+            <DSCBrowserLimitations onRetryDetection={checkDSCAvailability} />
           )}
 
-          {isDSCAvailable && !isLoading && (
+          {isDSCAvailable && certificates.length > 0 && !isLoading && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="certificate">Select Certificate</Label>

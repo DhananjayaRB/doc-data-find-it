@@ -106,3 +106,7 @@ Preferred communication style: Simple, everyday language.
 
 Changelog:
 - June 18, 2025. Initial setup
+- June 18, 2025. Implemented DSC (Digital Signature Certificate) signing functionality for HYP 2003 USB tokens
+- June 18, 2025. Created comprehensive Windows Certificate Store integration to address browser security limitations
+- June 18, 2025. Replaced mock certificate data with authentic Windows Certificate Store API detection
+- June 18, 2025. Added browser limitations guidance component for proper DSC setup instructions

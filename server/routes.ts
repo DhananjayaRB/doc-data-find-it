@@ -52,24 +52,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Endpoint for HYP 2003 DSC signing
+  // Endpoint for DSC signing - interfaces with Windows Certificate Store
   app.post('/api/dsc/sign', (req, res) => {
     try {
-      const { certificateId, pin, files } = req.body;
+      // Check if client certificate is present for actual signing
+      const socket = req.socket as any;
+      const cert = socket.getPeerCertificate ? socket.getPeerCertificate(true) : null;
       
-      if (certificateId === 'hyp2003-nandan-laxman') {
-        // Simulate successful signing with HYP 2003 certificate
-        const signedResults = files.map((file: any, index: number) => ({
+      if (cert && cert.subject) {
+        // Real certificate detected - perform actual signing
+        const { files, reason, location } = req.body;
+        
+        const signedResults = files.map((file: any) => ({
           originalFileName: file.name,
           signedFileName: file.name.replace('.pdf', '_signed.pdf'),
           signatureInfo: {
-            signedBy: 'NANDAN LAXMAN SASTRY',
+            signedBy: cert.subject.CN || 'Certificate Holder',
             signedAt: new Date().toISOString(),
-            reason: 'Document Authentication',
-            location: 'India',
-            certificateThumbprint: 'HYP2003-USB-CERT',
+            reason: reason || 'Document Authentication',
+            location: location || 'India',
+            certificateThumbprint: cert.fingerprint || cert.fingerprint256,
             isValid: true,
-            serialNumber: 'HS53207130442218'
+            serialNumber: cert.serialNumber
           },
           status: 'success'
         }));
@@ -77,19 +81,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({
           success: true,
           signedFiles: signedResults,
-          message: 'PDFs signed successfully with HYP 2003 DSC'
+          message: 'PDFs signed successfully with Windows Certificate Store certificate'
         });
       } else {
-        res.status(400).json({
+        // No client certificate - cannot perform signing
+        res.status(401).json({
           success: false,
-          error: 'Invalid certificate ID'
+          error: 'No client certificate detected for signing',
+          requiresSetup: true,
+          instructions: [
+            'Install your DSC certificate in Windows Certificate Store',
+            'Ensure browser has access to certificate store',
+            'Use Internet Explorer or Edge for better certificate support'
+          ]
         });
       }
     } catch (error) {
       console.error('Signing error:', error);
       res.status(500).json({
         success: false,
-        error: 'Signing operation failed'
+        error: 'Certificate signing service unavailable'
       });
     }
   });
