@@ -80,7 +80,7 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
 
   const loadCertificates = async () => {
     try {
-      // Method 1: Check Windows Certificate Store via server
+      // Check Windows Certificate Store via server
       const response = await fetch('/api/dsc/certificates', {
         method: 'GET',
         credentials: 'include'
@@ -90,63 +90,23 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
         const data = await response.json();
         if (data.detected && data.certificates.length > 0) {
           setCertificates(data.certificates);
+          setError(null);
+          return;
+        } else if (data.requiresSetup) {
+          // No certificates in browser store - show setup guidance
+          setCertificates([]);
+          setError(data.message);
           return;
         }
       }
 
-      // Method 2: Direct USB detection for HYP 2003
-      if ('usb' in navigator) {
-        const usb = (navigator as any).usb;
-        
-        // Check already connected devices
-        const devices = await usb.getDevices();
-        for (const device of devices) {
-          if (device.vendorId === 0x096E && device.productId === 0x0006) {
-            const cert = await this.extractHYP2003Certificate(device);
-            if (cert) {
-              setCertificates([cert]);
-              return;
-            }
-          }
-        }
-
-        // Request new device access
-        try {
-          const device = await usb.requestDevice({
-            filters: [
-              { vendorId: 0x096E, productId: 0x0006 }, // HYP 2003 specific
-              { vendorId: 0x096E } // HYP vendor
-            ]
-          });
-
-          if (device) {
-            const cert = await this.extractHYP2003Certificate(device);
-            if (cert) {
-              setCertificates([cert]);
-              return;
-            }
-          }
-        } catch (selectionError) {
-          console.log('User cancelled device selection');
-        }
-      }
-
-      // No certificates found - show setup instructions
-      setCertificates([{
-        id: 'setup-required',
-        name: 'HYP 2003 Certificate Setup Required',
-        issuer: 'Install DSC certificate in Windows Certificate Store',
-        validFrom: '',
-        validTo: '',
-        serialNumber: 'Setup Instructions Needed',
-        thumbprint: ''
-      }]);
-
-      setError('Please install your HYP 2003 certificate in Windows Certificate Store (Personal folder)');
+      // No certificates accessible to browser
+      setCertificates([]);
+      setError('No DSC certificates accessible to browser. Certificate must be installed in Windows Certificate Store.');
       
     } catch (error) {
       console.error('Certificate detection failed:', error);
-      setError('Failed to detect DSC certificate. Check USB connection and certificate installation.');
+      setError('Failed to communicate with certificate detection service.');
       setCertificates([]);
     }
   };

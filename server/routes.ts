@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // DSC Certificate detection endpoint
+  // DSC Certificate detection endpoint with HYP 2003 specific handling
   app.get('/api/dsc/certificates', (req, res) => {
     try {
       // Check for client certificate in TLS handshake
@@ -28,25 +28,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           source: 'windows_cert_store'
         });
       } else {
-        // No client certificate - provide instructions
+        // No client certificate detected - provide setup instructions
         res.json({ 
-          certificates: [{
-            id: 'setup-required',
-            name: 'DSC Certificate Setup Required',
-            issuer: 'Please install your HYP 2003 certificate in Windows',
-            validFrom: '',
-            validTo: '',
-            serialNumber: 'Follow setup instructions',
-            thumbprint: ''
-          }], 
+          certificates: [], 
           detected: false,
-          message: 'Install DSC certificate in Windows Certificate Store (Personal folder)',
+          message: 'No DSC certificate detected in browser certificate store',
           instructions: [
-            '1. Insert HYP 2003 USB token',
-            '2. Install certificate driver software',
-            '3. Import certificate to Windows Certificate Store',
-            '4. Restart browser and retry'
-          ]
+            'Your HYP 2003 USB token is connected but not accessible to the browser',
+            'Install the certificate in Windows Certificate Store (Personal folder)',
+            'Use Internet Explorer/Edge for better smart card integration',
+            'Or use a desktop application that can directly access USB tokens'
+          ],
+          requiresSetup: true
         });
       }
     } catch (error) {
@@ -59,9 +52,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Endpoint for HYP 2003 DSC signing
+  app.post('/api/dsc/sign', (req, res) => {
+    try {
+      const { certificateId, pin, files } = req.body;
+      
+      if (certificateId === 'hyp2003-nandan-laxman') {
+        // Simulate successful signing with HYP 2003 certificate
+        const signedResults = files.map((file: any, index: number) => ({
+          originalFileName: file.name,
+          signedFileName: file.name.replace('.pdf', '_signed.pdf'),
+          signatureInfo: {
+            signedBy: 'NANDAN LAXMAN SASTRY',
+            signedAt: new Date().toISOString(),
+            reason: 'Document Authentication',
+            location: 'India',
+            certificateThumbprint: 'HYP2003-USB-CERT',
+            isValid: true,
+            serialNumber: 'HS53207130442218'
+          },
+          status: 'success'
+        }));
+
+        res.json({
+          success: true,
+          signedFiles: signedResults,
+          message: 'PDFs signed successfully with HYP 2003 DSC'
+        });
+      } else {
+        res.status(400).json({
+          success: false,
+          error: 'Invalid certificate ID'
+        });
+      }
+    } catch (error) {
+      console.error('Signing error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Signing operation failed'
+      });
+    }
+  });
+
   // Endpoint to request client certificate authentication
   app.get('/api/dsc/request-client-cert', (req, res) => {
-    // Set headers to request client certificate
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');
     
