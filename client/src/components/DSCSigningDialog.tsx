@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FileSignature, Shield, AlertTriangle, CheckCircle, Loader2, RefreshCw, HelpCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { DSCBrowserLimitations } from './DSCBrowserLimitations';
+import { DSCBridgeConnector } from './DSCBridgeConnector';
+import DSCBridgeService from '@/services/dscBridgeService';
 
 interface DSCCertificate {
   id: string;
@@ -51,7 +53,11 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
   const [isSigning, setIsSigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDSCAvailable, setIsDSCAvailable] = useState(false);
+  const [bridgeReady, setBridgeReady] = useState(false);
+  const [useBridge, setUseBridge] = useState(true);
   const { toast } = useToast();
+  
+  const bridgeService = DSCBridgeService.getInstance();
 
   useEffect(() => {
     checkDSCAvailability();
@@ -149,57 +155,33 @@ export const DSCSigningDialog: React.FC<DSCSigningDialogProps> = ({
     setError(null);
 
     try {
-      const signedFiles: { 
-        originalFile: File; 
-        signedFile: File; 
-        signatureInfo: {
-          signedBy: string;
-          signedAt: string;
-          reason: string;
-          location: string;
-          certificateThumbprint: string;
-          isValid: boolean;
-        };
-      }[] = [];
-
-      for (const fileData of selectedFiles) {
-        const { file } = fileData;
-        
-        // Create signed PDF (simulation)
-        const signedPdfBlob = await signPDFWithDSC(file, selectedCertificate, pin);
-        const signedFile = new File([signedPdfBlob], file.name.replace('.pdf', '_signed.pdf'), {
-          type: 'application/pdf'
-        });
-
-        const cert = certificates.find(c => c.id === selectedCertificate);
-        
-        signedFiles.push({
-          originalFile: file,
-          signedFile,
-          signatureInfo: {
-            signedBy: cert?.name || 'Unknown',
-            signedAt: new Date().toISOString(),
-            reason: signingReason,
-            location: signingLocation,
-            certificateThumbprint: cert?.thumbprint || '',
-            isValid: true
-          }
-        });
-      }
-
-      onSigningComplete(signedFiles);
+      const files = selectedFiles.map(f => f.file);
       
-      toast({
-        title: "PDFs Signed Successfully!",
-        description: `${signedFiles.length} PDF(s) have been digitally signed`,
-        variant: "default"
-      });
+      if (bridgeReady && useBridge) {
+        // Use bridge service for real DSC signing with USB token
+        const signedDocuments = await bridgeService.signPDFs(
+          files,
+          selectedCertificate,
+          pin,
+          { reason: signingReason, location: signingLocation }
+        );
+        
+        onSigningComplete(signedDocuments);
+        
+        toast({
+          title: "PDFs Signed Successfully!",
+          description: `${signedDocuments.length} PDF(s) digitally signed with DSC token`,
+          variant: "default"
+        });
+      } else {
+        throw new Error('DSC Bridge service required for USB token access');
+      }
 
       setIsOpen(false);
       resetForm();
     } catch (error) {
       console.error('Signing error:', error);
-      setError(`Signing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setError(`Signing failed: ${error instanceof Error ? error.message : 'DSC Bridge service unavailable'}`);
     } finally {
       setIsSigning(false);
     }
