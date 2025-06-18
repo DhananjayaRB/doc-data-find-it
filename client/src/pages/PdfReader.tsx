@@ -42,34 +42,47 @@ const PdfReader = () => {
 
   const simplePanExtraction = (text: string, fileName: string): string => {
     console.log(`Simple PAN extraction for: ${fileName}`);
-    console.log('First 500 chars of PDF text:', text.substring(0, 500));
+    console.log('Full PDF text (first 1000 chars):', text.substring(0, 1000));
     
     // Focus on first page content - split by form feed or page breaks
-    const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
+    const firstPageText = text.split('\f')[0] || text.substring(0, 3000);
+    console.log('First page text (first 1000 chars):', firstPageText.substring(0, 1000));
     
-    // Simple PAN patterns - just find any 10-character alphanumeric that looks like PAN
+    // Multiple patterns to find Employee PAN
     const panPatterns = [
-      // Standard PAN format
+      // Look for "Employee PAN:" followed by any characters
+      /Employee\s+PAN\s*:\s*([A-Z0-9]{10})/gi,
+      /Employee\s+PAN\s*:\s*([A-Z0-9]+)/gi,
+      // Look for just "PAN:" followed by characters
+      /PAN\s*:\s*([A-Z0-9]{10})/gi,
+      /PAN\s*:\s*([A-Z0-9]+)/gi,
+      // Standard PAN format anywhere in text
       /\b([A-Z]{5}[0-9]{4}[A-Z]{1})\b/g,
-      // PAN with common keywords
-      /(?:PAN|Employee PAN|P\.A\.N\.?)[\s\:\-]*([A-Z0-9]{10})/gi,
-      // Any 10-character alphanumeric that might be PAN
-      /\b([A-Z]{3,}[0-9]{3,}[A-Z0-9]{1,})\b/g
+      // More flexible PAN format
+      /\b([A-Z]{4}[A-Z0-9]{6})\b/g,
+      // Look for the specific pattern AGCPK3668E style
+      /\b([A-Z]{4,5}[0-9]{4}[A-Z])\b/g
     ];
 
-    // Try patterns on first page text first
-    for (const pattern of panPatterns) {
-      const matches = firstPageText.matchAll(pattern);
-      for (const match of matches) {
-        const pan = match[1].replace(/[\s\.\-]/g, '').toUpperCase();
-        if (pan.length === 10) {
-          console.log(`PAN found: ${pan}`);
-          return pan;
+    // Try each pattern
+    for (let i = 0; i < panPatterns.length; i++) {
+      const pattern = panPatterns[i];
+      console.log(`Trying pattern ${i + 1}:`, pattern);
+      const match = firstPageText.match(pattern);
+      if (match) {
+        console.log('Pattern matched:', match);
+        for (let j = 0; j < match.length; j++) {
+          const potentialPan = match[j].replace(/.*:\s*/, '').trim().toUpperCase();
+          console.log(`Potential PAN ${j}:`, potentialPan);
+          if (potentialPan.length >= 10 && potentialPan.length <= 12 && /^[A-Z0-9]+$/.test(potentialPan)) {
+            console.log(`Valid PAN found: ${potentialPan}`);
+            return potentialPan;
+          }
         }
       }
     }
 
-    // Try to find PAN in filename
+    // Try to find PAN in filename as last resort
     const fileNamePan = fileName.match(/([A-Z0-9]{10})/);
     if (fileNamePan) {
       console.log(`PAN found in filename: ${fileNamePan[1]}`);
@@ -77,6 +90,7 @@ const PdfReader = () => {
     }
 
     console.log(`No PAN found for: ${fileName}`);
+    console.log('Available text for debugging:', firstPageText);
     return '';
   };
 
@@ -95,40 +109,96 @@ const PdfReader = () => {
       const text = pdfData.text;
       const firstPageText = text.split('\f')[0] || text.substring(0, 2000);
       
-      // Extract Date
-      const dateMatch = text.match(/(\d{1,2}[-/]\w{3}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
-      const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
-        day: '2-digit', 
-        month: 'short', 
-        year: 'numeric' 
-      });
+      // Extract Date - look for specific formats like "16-Jun-2025"
+      let date = '';
+      const datePatterns = [
+        /Date\s*:\s*(\d{1,2}[-]\w{3}[-]\d{4})/i,
+        /(\d{1,2}[-]\w{3}[-]\d{4})/,
+        /(\d{1,2}[-/]\d{1,2}[-/]\d{4})/
+      ];
       
-      // Extract Employee Name
-      const nameMatch = text.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
-      let employeeName = nameMatch ? nameMatch[1].trim() : 'Unknown Employee';
+      for (const pattern of datePatterns) {
+        const dateMatch = firstPageText.match(pattern);
+        if (dateMatch) {
+          date = dateMatch[1];
+          break;
+        }
+      }
       
-      if (employeeName === 'Unknown Employee') {
+      if (!date) {
+        date = new Date().toLocaleDateString('en-GB', { 
+          day: '2-digit', 
+          month: 'short', 
+          year: 'numeric' 
+        });
+      }
+      
+      // Extract Employee Name - look for "Employee Name:" pattern
+      let employeeName = '';
+      const namePatterns = [
+        /Employee\s+Name\s*:\s*([A-Za-z\s]+?)(?:\n|Employee|PAN|$)/i,
+        /Name\s*:\s*([A-Za-z\s]+?)(?:\n|Employee|PAN|$)/i,
+        /(?:Mr\.|Ms\.|Mrs\.)\s*([A-Za-z\s]+?)(?:\n|Employee|PAN|$)/i
+      ];
+      
+      for (const pattern of namePatterns) {
+        const nameMatch = firstPageText.match(pattern);
+        if (nameMatch) {
+          employeeName = nameMatch[1].trim();
+          break;
+        }
+      }
+      
+      if (!employeeName) {
         const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
         if (fileNameMatch) {
           employeeName = fileNameMatch[1].replace(/_/g, ' ');
+        } else {
+          employeeName = 'Unknown Employee';
         }
       }
       
       // Simple PAN extraction without validation
       const employeePAN = simplePanExtraction(text, file.name);
       
-      // Extract Financial Year
-      const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
-      let financialYear = fyMatch ? fyMatch[1] : '2024-25';
-      if (!financialYear.includes('-')) {
-        financialYear = financialYear.substring(0, 4) + '-' + financialYear.substring(4);
+      // Extract Financial Year - look for "Financial Year:" pattern
+      let financialYear = '';
+      const fyPatterns = [
+        /Financial\s+Year\s*:\s*(\d{4}[-]\d{2})/i,
+        /F\.?Y\.?\s*:\s*(\d{4}[-]\d{2})/i,
+        /(\d{4}[-]\d{2})/
+      ];
+      
+      for (const pattern of fyPatterns) {
+        const fyMatch = firstPageText.match(pattern);
+        if (fyMatch) {
+          financialYear = fyMatch[1];
+          break;
+        }
       }
       
-      // Extract Assessment Year
-      const ayMatch = text.match(/Assessment Year[:\s]*(\d{4}[-]?\d{2})/i);
-      let assessmentYear = ayMatch ? ayMatch[1] : '2025-26';
-      if (!assessmentYear.includes('-')) {
-        assessmentYear = assessmentYear.substring(0, 4) + '-' + assessmentYear.substring(4);
+      if (!financialYear) {
+        financialYear = '2024-25';
+      }
+      
+      // Extract Assessment Year - look for "Assessment Year:" pattern
+      let assessmentYear = '';
+      const ayPatterns = [
+        /Assessment\s+Year\s*:\s*(\d{4}[-]\d{2})/i,
+        /A\.?Y\.?\s*:\s*(\d{4}[-]\d{2})/i,
+        /Assessment.*?(\d{4}[-]\d{2})/i
+      ];
+      
+      for (const pattern of ayPatterns) {
+        const ayMatch = firstPageText.match(pattern);
+        if (ayMatch) {
+          assessmentYear = ayMatch[1];
+          break;
+        }
+      }
+      
+      if (!assessmentYear) {
+        assessmentYear = '2025-26';
       }
       
       console.log('Extracted data:', {
