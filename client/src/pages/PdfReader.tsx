@@ -201,13 +201,16 @@ const PdfReader = () => {
         assessmentYear = '2025-26';
       }
       
+      // Get the raw first page text for pdfread parameter
+      const rawFirstPageText = firstPageText.substring(0, 2000); // Increased to 2000 chars
+      
       console.log('Extracted data:', {
         date,
         employeeName,
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
         assessmentYear,
-        pdfread: firstPageText.substring(0, 1000) // First 1000 chars
+        pdfread: rawFirstPageText
       });
       
       return {
@@ -216,7 +219,7 @@ const PdfReader = () => {
         employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
         assessmentYear,
-        pdfread: firstPageText.substring(0, 1000)
+        pdfread: rawFirstPageText
       };
       
     } catch (error) {
