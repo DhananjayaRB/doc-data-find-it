@@ -274,7 +274,18 @@ const PdfReader = () => {
     }
   };
 
-  const handleSigningComplete = (signedFiles: SignedDocument[]) => {
+  const handleSigningComplete = (signedFiles: { 
+    originalFile: File; 
+    signedFile: File; 
+    signatureInfo: {
+      signedBy: string;
+      signedAt: string;
+      reason: string;
+      location: string;
+      certificateThumbprint: string;
+      isValid: boolean;
+    };
+  }[]) => {
     setSignedDocuments(prev => [...prev, ...signedFiles]);
     
     toast({
