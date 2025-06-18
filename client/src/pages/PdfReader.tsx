@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { ExtractedData } from '@/components/ExtractedData';
 import { FailedPanList } from '@/components/FailedPanList';
-import { FileText, Upload, CheckCircle, AlertTriangle, Send } from 'lucide-react';
+import { DSCSigningDialog } from '@/components/DSCSigningDialog';
+import { FileText, Upload, CheckCircle, AlertTriangle, Send, FileSignature, Download } from 'lucide-react';
 import { mockAzureUpload } from '@/services/azureUploadService';
 import { uploadToApi } from '@/services/apiUploadService';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import DSCSigningService, { type SignedDocument } from '@/services/dscSigningService';
 
 interface PdfData {
   date: string;
@@ -34,11 +36,13 @@ const PdfReader = () => {
   const [extractedDataList, setExtractedDataList] = useState<PdfData[]>([]);
   const [failedPanExtractions, setFailedPanExtractions] = useState<FailedPanExtraction[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<{ file: File; data: PdfData }[]>([]);
+  const [signedDocuments, setSignedDocuments] = useState<SignedDocument[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isApiUploading, setIsApiUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
+  const dscService = DSCSigningService.getInstance();
 
   const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath' | 'companyName'>> => {
     console.log(`Starting PDF extraction for file: ${file.name}`);
@@ -270,6 +274,31 @@ const PdfReader = () => {
     }
   };
 
+  const handleSigningComplete = (signedFiles: SignedDocument[]) => {
+    setSignedDocuments(prev => [...prev, ...signedFiles]);
+    
+    toast({
+      title: "Digital Signing Complete!",
+      description: `${signedFiles.length} PDF(s) have been digitally signed with DSC`,
+      variant: "default"
+    });
+  };
+
+  const downloadSignedPDF = (signedDoc: SignedDocument) => {
+    const url = URL.createObjectURL(signedDoc.signedFile);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = signedDoc.signedFile.name;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadAllSignedPDFs = () => {
+    signedDocuments.forEach(signedDoc => {
+      downloadSignedPDF(signedDoc);
+    });
+  };
+
   const exportAsJSON = () => {
     const dataStr = JSON.stringify(extractedDataList, null, 2);
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
@@ -313,31 +342,50 @@ const PdfReader = () => {
             />
             
             {extractedDataList.length > 0 && (
-              <div className="flex gap-3">
-                <Button 
-                  onClick={exportAsJSON}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  Export JSON
-                </Button>
-                <Button 
-                  onClick={handleBulkApiUpload}
-                  disabled={isApiUploading || uploadedFiles.length === 0}
-                  className="flex-1"
-                >
-                  {isApiUploading ? (
-                    <>
-                      <Upload className="mr-2 h-4 w-4 animate-spin" />
-                      Uploading...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="mr-2 h-4 w-4" />
-                      Upload to API ({uploadedFiles.length})
-                    </>
+              <div className="space-y-3">
+                <div className="flex gap-3">
+                  <Button 
+                    onClick={exportAsJSON}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    Export JSON
+                  </Button>
+                  <Button 
+                    onClick={handleBulkApiUpload}
+                    disabled={isApiUploading || uploadedFiles.length === 0}
+                    className="flex-1"
+                  >
+                    {isApiUploading ? (
+                      <>
+                        <Upload className="mr-2 h-4 w-4 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="mr-2 h-4 w-4" />
+                        Upload to API ({uploadedFiles.length})
+                      </>
+                    )}
+                  </Button>
+                </div>
+                
+                <div className="flex gap-3">
+                  <DSCSigningDialog 
+                    selectedFiles={uploadedFiles}
+                    onSigningComplete={handleSigningComplete}
+                  />
+                  {signedDocuments.length > 0 && (
+                    <Button 
+                      onClick={downloadAllSignedPDFs}
+                      variant="outline"
+                      className="flex items-center gap-2"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download Signed PDFs ({signedDocuments.length})
+                    </Button>
                   )}
-                </Button>
+                </div>
               </div>
             )}
           </div>
@@ -365,6 +413,48 @@ const PdfReader = () => {
               </div>
             )}
             
+            {signedDocuments.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                    <FileSignature className="h-5 w-5 text-green-600" />
+                    Digitally Signed Documents
+                  </h2>
+                  <div className="flex items-center text-sm text-gray-500">
+                    <CheckCircle className="h-4 w-4 text-green-500 mr-1" />
+                    {signedDocuments.length} signed
+                  </div>
+                </div>
+                
+                <div className="space-y-3 max-h-64 overflow-y-auto">
+                  {signedDocuments.map((signedDoc, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
+                      <div className="flex-1">
+                        <div className="font-medium text-sm text-gray-900">
+                          {signedDoc.signedFile.name}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Signed by: {signedDoc.signatureInfo.signedBy}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {new Date(signedDoc.signatureInfo.signedAt).toLocaleString()}
+                        </div>
+                      </div>
+                      <Button 
+                        onClick={() => downloadSignedPDF(signedDoc)}
+                        size="sm"
+                        variant="outline"
+                        className="ml-3"
+                      >
+                        <Download className="h-3 w-3 mr-1" />
+                        Download
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {failedPanExtractions.length > 0 && (
               <FailedPanList failedExtractions={failedPanExtractions} />
             )}
