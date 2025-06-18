@@ -25,17 +25,104 @@ const PdfReader = () => {
   const { toast } = useToast();
 
   const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath'>> => {
-    // Simulate PDF processing - replace with actual PDF parsing logic
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    console.log(`Starting PDF extraction for file: ${file.name}`);
     
-    // Mock data extraction - in real implementation, use pdf-parse or similar
-    return {
-      date: "16-Jun-2025",
-      employeeName: "Jeodeendra Kumar",
-      employeePAN: "AGCPK3668E",
-      financialYear: "2024-25",
-      assessmentYear: "2025-26"
-    };
+    try {
+      // Convert file to buffer for pdf-parse
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      // Import pdf-parse dynamically
+      const pdfParse = await import('pdf-parse');
+      const pdfData = await pdfParse.default(buffer);
+      
+      console.log('Extracted PDF text:', pdfData.text);
+      
+      // Extract information using regex patterns
+      const text = pdfData.text;
+      
+      // Extract Date (look for patterns like DD-MMM-YYYY or DD/MM/YYYY)
+      const dateMatch = text.match(/(\d{1,2}[-/]\w{3}[-/]\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
+      const date = dateMatch ? dateMatch[1] : new Date().toLocaleDateString('en-GB', { 
+        day: '2-digit', 
+        month: 'short', 
+        year: 'numeric' 
+      });
+      
+      // Extract Employee Name (look for name patterns, often after "Name:" or similar)
+      const nameMatch = text.match(/(?:Name|Employee Name|Employee|Mr\.|Ms\.|Mrs\.)\s*:?\s*([A-Z][a-zA-Z\s\.]+?)(?:\n|PAN|Employee|$)/i);
+      let employeeName = nameMatch ? nameMatch[1].trim() : 'Unknown Employee';
+      
+      // Try to extract from filename if not found in text
+      if (employeeName === 'Unknown Employee') {
+        const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
+        if (fileNameMatch) {
+          employeeName = fileNameMatch[1].replace(/_/g, ' ');
+        }
+      }
+      
+      // Extract PAN (format: ABCDE1234F)
+      const panMatch = text.match(/([A-Z]{5}\d{4}[A-Z]{1})/);
+      const employeePAN = panMatch ? panMatch[1] : 'PAN_NOT_FOUND';
+      
+      // Extract Financial Year (format: YYYY-YY)
+      const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
+      let financialYear = fyMatch ? fyMatch[1] : '2024-25';
+      if (!financialYear.includes('-')) {
+        financialYear = financialYear.substring(0, 4) + '-' + financialYear.substring(4);
+      }
+      
+      // Extract Assessment Year (usually FY + 1)
+      const ayMatch = text.match(/Assessment Year[:\s]*(\d{4}[-]?\d{2})/i);
+      let assessmentYear = ayMatch ? ayMatch[1] : '2025-26';
+      if (!assessmentYear.includes('-')) {
+        assessmentYear = assessmentYear.substring(0, 4) + '-' + assessmentYear.substring(4);
+      }
+      
+      console.log('Extracted data:', {
+        date,
+        employeeName,
+        employeePAN,
+        financialYear,
+        assessmentYear
+      });
+      
+      return {
+        date,
+        employeeName,
+        employeePAN,
+        financialYear,
+        assessmentYear
+      };
+      
+    } catch (error) {
+      console.error('Error parsing PDF:', error);
+      
+      // Fallback: try to extract employee name from file path/name
+      const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/') : [];
+      let fallbackName = 'Unknown Employee';
+      
+      if (pathParts.length >= 2) {
+        fallbackName = pathParts[1]; // Get employee folder name
+      } else {
+        const fileNameMatch = file.name.match(/([A-Z][a-zA-Z\s]+?)_/);
+        if (fileNameMatch) {
+          fallbackName = fileNameMatch[1].replace(/_/g, ' ');
+        }
+      }
+      
+      return {
+        date: new Date().toLocaleDateString('en-GB', { 
+          day: '2-digit', 
+          month: 'short', 
+          year: 'numeric' 
+        }),
+        employeeName: fallbackName,
+        employeePAN: 'EXTRACTION_FAILED',
+        financialYear: '2024-25',
+        assessmentYear: '2025-26'
+      };
+    }
   };
 
   const handleFileUpload = async (file: File, employeePath: string) => {
