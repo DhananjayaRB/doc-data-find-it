@@ -2,9 +2,10 @@
 import React, { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { ExtractedData } from '@/components/ExtractedData';
-import { FileText, Upload, CheckCircle } from 'lucide-react';
+import { FileText, Upload, CheckCircle, AlertTriangle } from 'lucide-react';
 import { mockAzureUpload } from '@/services/azureUploadService';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface PdfData {
   date: string;
@@ -17,12 +18,59 @@ interface PdfData {
   uploadId?: string;
 }
 
+interface FailedPanExtraction {
+  fileName: string;
+  employeePath: string;
+  employeeName: string;
+  extractedText: string;
+}
+
 const PdfReader = () => {
   const [extractedDataList, setExtractedDataList] = useState<PdfData[]>([]);
+  const [failedPanExtractions, setFailedPanExtractions] = useState<FailedPanExtraction[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStarted, setProcessingStarted] = useState(false);
   const { toast } = useToast();
+
+  const extractPanFromText = (text: string, fileName: string): string => {
+    console.log(`Attempting PAN extraction for: ${fileName}`);
+    
+    // Multiple PAN extraction patterns
+    const panPatterns = [
+      // Standard PAN format: ABCDE1234F
+      /\b([A-Z]{5}[0-9]{4}[A-Z]{1})\b/g,
+      // PAN with spaces or dashes
+      /\b([A-Z]{5}[\s\-]?[0-9]{4}[\s\-]?[A-Z]{1})\b/g,
+      // PAN in parentheses or brackets
+      /[\(\[]([A-Z]{5}[0-9]{4}[A-Z]{1})[\)\]]/g,
+      // PAN after keywords
+      /(?:PAN|Permanent Account Number|P\.A\.N\.?|Tax ID)[\s\:]+([A-Z]{5}[0-9]{4}[A-Z]{1})/gi,
+      // PAN in forms or tables
+      /PAN[\s\:]*([A-Z]{5}[0-9]{4}[A-Z]{1})/gi
+    ];
+
+    for (const pattern of panPatterns) {
+      const matches = text.matchAll(pattern);
+      for (const match of matches) {
+        const pan = match[1].replace(/[\s\-]/g, ''); // Remove spaces and dashes
+        if (pan.length === 10) {
+          console.log(`PAN found using pattern: ${pattern} -> ${pan}`);
+          return pan;
+        }
+      }
+    }
+
+    // Try to find PAN-like patterns in the filename
+    const fileNamePan = fileName.match(/([A-Z]{5}[0-9]{4}[A-Z]{1})/);
+    if (fileNamePan) {
+      console.log(`PAN found in filename: ${fileNamePan[1]}`);
+      return fileNamePan[1];
+    }
+
+    console.log(`No PAN found for: ${fileName}`);
+    return '';
+  };
 
   const extractDataFromPdf = async (file: File): Promise<Omit<PdfData, 'employeePath'>> => {
     console.log(`Starting PDF extraction for file: ${file.name}`);
@@ -36,7 +84,7 @@ const PdfReader = () => {
       const pdfParse = await import('pdf-parse');
       const pdfData = await pdfParse.default(buffer);
       
-      console.log('Extracted PDF text:', pdfData.text);
+      console.log('Extracted PDF text length:', pdfData.text.length);
       
       // Extract information using regex patterns
       const text = pdfData.text;
@@ -61,9 +109,26 @@ const PdfReader = () => {
         }
       }
       
-      // Extract PAN (format: ABCDE1234F)
-      const panMatch = text.match(/([A-Z]{5}\d{4}[A-Z]{1})/);
-      const employeePAN = panMatch ? panMatch[1] : 'PAN_NOT_FOUND';
+      // Enhanced PAN extraction
+      const employeePAN = extractPanFromText(text, file.name);
+      
+      // If PAN extraction failed, add to failed list
+      if (!employeePAN) {
+        const failedExtraction: FailedPanExtraction = {
+          fileName: file.name,
+          employeePath: file.webkitRelativePath || file.name,
+          employeeName,
+          extractedText: text.substring(0, 1000) // First 1000 chars for debugging
+        };
+        
+        setFailedPanExtractions(prev => [...prev, failedExtraction]);
+        
+        toast({
+          title: "PAN Extraction Failed",
+          description: `Could not extract PAN for ${employeeName} from ${file.name}`,
+          variant: "destructive",
+        });
+      }
       
       // Extract Financial Year (format: YYYY-YY)
       const fyMatch = text.match(/(\d{4}[-]?\d{2})/);
@@ -82,7 +147,7 @@ const PdfReader = () => {
       console.log('Extracted data:', {
         date,
         employeeName,
-        employeePAN,
+        employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
         assessmentYear
       });
@@ -90,7 +155,7 @@ const PdfReader = () => {
       return {
         date,
         employeeName,
-        employeePAN,
+        employeePAN: employeePAN || 'EXTRACTION_FAILED',
         financialYear,
         assessmentYear
       };
@@ -111,6 +176,14 @@ const PdfReader = () => {
         }
       }
       
+      // Add to failed extractions
+      setFailedPanExtractions(prev => [...prev, {
+        fileName: file.name,
+        employeePath: file.webkitRelativePath || file.name,
+        employeeName: fallbackName,
+        extractedText: 'PDF parsing failed'
+      }]);
+      
       return {
         date: new Date().toLocaleDateString('en-GB', { 
           day: '2-digit', 
@@ -130,6 +203,7 @@ const PdfReader = () => {
     if (!processingStarted) {
       console.log('Starting new folder processing, clearing previous data');
       setExtractedDataList([]);
+      setFailedPanExtractions([]);
       setProcessingStarted(true);
     }
 
@@ -214,6 +288,30 @@ const PdfReader = () => {
             Upload your company folder with Form 16 PDFs to extract and upload employee information
           </p>
         </div>
+
+        {/* Failed PAN Extractions Alert */}
+        {failedPanExtractions.length > 0 && (
+          <div className="mb-8">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="font-medium mb-2">
+                  PAN extraction failed for {failedPanExtractions.length} file(s):
+                </div>
+                <ul className="list-disc list-inside space-y-1">
+                  {failedPanExtractions.map((failed, index) => (
+                    <li key={index} className="text-sm">
+                      <strong>{failed.employeeName}</strong> - {failed.fileName}
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-2 text-sm">
+                  Check console logs for detailed extraction attempts.
+                </div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
 
         {/* Main Content */}
         <div className="grid gap-8 lg:grid-cols-3">
