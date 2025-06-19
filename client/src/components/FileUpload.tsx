@@ -37,10 +37,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     for (const pdfFile of pdfFiles) {
       const path = pdfFile.webkitRelativePath;
       const pathParts = path.split('/');
-      
-      if (pathParts.length >= 3) {
-        // Extract employee path (MainFolder/SubFolder)
-        const employeePath = pathParts.slice(0, 2).join('/');
+      if (pathParts.length >= 2) {
+        // Use all but the last part (file name) as employeePath
+        const employeePath = pathParts.slice(0, -1).join('/');
         onFileUpload(pdfFile, employeePath);
       }
     }

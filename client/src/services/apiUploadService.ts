@@ -51,7 +51,10 @@ export const uploadToApi = async (
     let allSuccess = true;
     let allMessages: string[] = [];
 
-    for (const batch of fileBatches) {
+    const failedBatches: { batchIndex: number; files: string[]; error: string }[] = [];
+
+    for (let i = 0; i < fileBatches.length; i++) {
+      const batch = fileBatches[i];
       const payload = await Promise.all(
         batch.map(async ({ file, data }) => {
           const base64Document = await convertFileToBase64(file);
@@ -62,33 +65,49 @@ export const uploadToApi = async (
         })
       );
 
-      console.log('Uploading batch to API:', {
-        url: 'https://apiv1.resolvepay.in/organization/storeawsformfile-client',
-        filesCount: payload.length
-      });
+      let attempt = 0;
+      let success = false;
+      let lastError = '';
+      while (attempt < 3 && !success) {
+        try {
+          console.log(`Uploading batch ${i + 1}/${fileBatches.length}, attempt ${attempt + 1}`);
+          const response = await fetch('https://apiv1.resolvepay.in/organization/storeawsformfile-client', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ form16DocumentAlls: payload }),
+          });
 
-      const response = await fetch('https://apiv1.resolvepay.in/organization/storeawsformfile-client', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ form16DocumentAlls: payload }),
-      });
+          if (!response.ok) {
+            lastError = response.statusText;
+            attempt++;
+            continue;
+          }
 
-      if (!response.ok) {
-        allSuccess = false;
-        allMessages.push(`Batch upload failed: ${response.statusText}`);
-        continue;
+          const result = await response.json();
+          allUploadIds.push(result.uploadId || `api-${Date.now()}`);
+          allMessages.push(`Batch ${i + 1} uploaded successfully`);
+          success = true;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err);
+          attempt++;
+        }
       }
-
-      const result = await response.json();
-      allUploadIds.push(result.uploadId || `api-${Date.now()}`);
-      allMessages.push('Batch uploaded successfully');
+      if (!success) {
+        allSuccess = false;
+        allMessages.push(`Batch ${i + 1} failed after 3 attempts: ${lastError}`);
+        failedBatches.push({
+          batchIndex: i + 1,
+          files: batch.map(({ data }) => data.employeeName),
+          error: lastError
+        });
+      }
     }
 
     return {
       success: allSuccess,
-      message: allMessages.join('; '),
+      message: allMessages.join('; ') + (failedBatches.length > 0 ? `; Failed batches: ${JSON.stringify(failedBatches)}` : ''),
       uploadId: allUploadIds.join(',')
     };
 
