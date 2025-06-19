@@ -36,45 +36,64 @@ export const uploadToApi = async (
 ): Promise<ApiUploadResponse> => {
   try {
     console.log('Converting files to base64 and preparing payload...');
-    
-    const payload = await Promise.all(
-      files.map(async ({ file, data }) => {
-        const base64Document = await convertFileToBase64(file);
-        return {
-          ...data,
-          document: base64Document
-        };
-      })
-    );
 
-    console.log('Uploading to API:', {
-      url: 'https://ap.store.in/organizat/storeawsformfile',
-      filesCount: payload.length
-    });
+    // Helper to chunk array into batches of 10
+    const chunkArray = <T,>(arr: T[], size: number): T[][] => {
+      const res: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) {
+        res.push(arr.slice(i, i + size));
+      }
+      return res;
+    };
 
-    const response = await fetch('https://ap.store.in/organizat/storeawsformfile', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const fileBatches = chunkArray(files, 10);
+    let allUploadIds: string[] = [];
+    let allSuccess = true;
+    let allMessages: string[] = [];
 
-    if (!response.ok) {
-      throw new Error(`API upload failed: ${response.statusText}`);
+    for (const batch of fileBatches) {
+      const payload = await Promise.all(
+        batch.map(async ({ file, data }) => {
+          const base64Document = await convertFileToBase64(file);
+          return {
+            ...data,
+            document: base64Document
+          };
+        })
+      );
+
+      console.log('Uploading batch to API:', {
+        url: 'https://apiv1.resolvepay.in/organization/storeawsformfile-client',
+        filesCount: payload.length
+      });
+
+      const response = await fetch('https://apiv1.resolvepay.in/organization/storeawsformfile-client', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ form16DocumentAlls: payload }),
+      });
+
+      if (!response.ok) {
+        allSuccess = false;
+        allMessages.push(`Batch upload failed: ${response.statusText}`);
+        continue;
+      }
+
+      const result = await response.json();
+      allUploadIds.push(result.uploadId || `api-${Date.now()}`);
+      allMessages.push('Batch uploaded successfully');
     }
 
-    const result = await response.json();
-    
     return {
-      success: true,
-      message: 'Documents uploaded successfully to API',
-      uploadId: result.uploadId || `api-${Date.now()}`
+      success: allSuccess,
+      message: allMessages.join('; '),
+      uploadId: allUploadIds.join(',')
     };
 
   } catch (error) {
     console.error('API upload error:', error);
-    
     return {
       success: false,
       message: error instanceof Error ? error.message : 'API upload failed'

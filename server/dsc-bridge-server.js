@@ -1,11 +1,16 @@
 // DSC Bridge Server - Desktop service for USB DSC token access
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-const WebSocket = require('ws');
-const { spawn } = require('child_process');
+import express from 'express';
+import cors from 'cors';
+import multer from 'multer';
+import fs from 'fs';
+import path from 'path';
+import WebSocket, { WebSocketServer } from 'ws';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname as pathDirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = pathDirname(__filename);
 
 class DSCBridgeServer {
   constructor() {
@@ -126,7 +131,7 @@ class DSCBridgeServer {
   }
 
   setupWebSocket() {
-    this.wss = new WebSocket.Server({ port: this.wsPort });
+    this.wss = new WebSocketServer({ port: this.wsPort });
     
     this.wss.on('connection', (ws) => {
       console.log('WebSocket client connected');
@@ -170,13 +175,11 @@ class DSCBridgeServer {
   async detectUSBTokens() {
     try {
       // Use Windows WMI to detect USB devices
-      const wmiQuery = `
-        Get-WmiObject -Class Win32_PnPEntity | 
-        Where-Object { $_.Description -like "*Smart Card*" -or $_.Description -like "*HYP*" } | 
-        Select-Object Name, Description, DeviceID
-      `;
+      const wmiQuery = 'Get-WmiObject -Class Win32_PnPEntity | Where-Object { $_.Description -like "*Smart Card*" -or $_.Description -like "*HYP*" } | Select-Object Name, Description, DeviceID';
       
-      const result = await this.executeCommand('powershell', ['-Command', wmiQuery]);
+      const result = await this.executeCommand('powershell', [
+        '-Command', `${wmiQuery}`
+      ]);
       const previousCount = this.usbTokens.length;
       
       // Parse PowerShell output and detect HYP tokens
@@ -363,7 +366,12 @@ class DSCBridgeServer {
 
   executeCommand(command, args) {
     return new Promise((resolve, reject) => {
-      const process = spawn(command, args, { shell: true });
+      let process;
+      if (command === 'powershell' && Array.isArray(args)) {
+        process = spawn(command, args); // No shell: true for PowerShell with args
+      } else {
+        process = spawn(command, args, { shell: true });
+      }
       let output = '';
       let error = '';
       
@@ -397,4 +405,4 @@ class DSCBridgeServer {
 const bridge = new DSCBridgeServer();
 bridge.start();
 
-module.exports = DSCBridgeServer;
+export default DSCBridgeServer;
